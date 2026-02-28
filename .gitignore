@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.aws-sam/
+
+# Build outputs
+frontend/dist/
+backend/.build/
+
+# Environment files
+.env
+.env.*
+env.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SAM
+samconfig.toml
+
+# CloudFront keys (NEVER commit)
+cf-private-key.pem
+cf-public-key.pem
+*.pem
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+coverage/
+
+# Temporary
+tmp/
+temp/

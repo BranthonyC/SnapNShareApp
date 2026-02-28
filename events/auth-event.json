@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /events/{eventId}/auth",
+  "rawPath": "/dev/events/evt_test123456/auth",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "pathParameters": {
+    "eventId": "evt_test123456"
+  },
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/dev/events/evt_test123456/auth",
+      "sourceIp": "127.0.0.1"
+    },
+    "routeKey": "POST /events/{eventId}/auth",
+    "stage": "dev"
+  },
+  "body": "{\"password\":\"fiesta2026\",\"nickname\":\"Maria\"}",
+  "isBase64Encoded": false
+}
