@@ -1,6 +1,6 @@
 import { S3Client, ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3';
 
-import { logger } from '../../shared/logger.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const s3 = new S3Client({});
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET;

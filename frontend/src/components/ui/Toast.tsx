@@ -3,13 +3,13 @@ import { useToastStore } from '@/stores/toastStore';
 import type { ToastType } from '@/stores/toastStore';
 
 const iconMap: Record<ToastType, React.ReactNode> = {
-  success: <CheckCircle className="w-5 h-5 text-accent-green shrink-0" aria-hidden="true" />,
+  success: <CheckCircle className="w-5 h-5 text-accent shrink-0" aria-hidden="true" />,
   error: <AlertCircle className="w-5 h-5 text-accent-coral shrink-0" aria-hidden="true" />,
   info: <Info className="w-5 h-5 text-blue-500 shrink-0" aria-hidden="true" />,
 };
 
 const borderColorMap: Record<ToastType, string> = {
-  success: 'border-l-accent-green',
+  success: 'border-l-accent',
   error: 'border-l-accent-coral',
   info: 'border-l-blue-500',
 };

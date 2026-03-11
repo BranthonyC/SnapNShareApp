@@ -1,0 +1,16 @@
+meta {
+  name: Clear All Media
+  type: http
+  seq: 6
+}
+
+delete {
+  url: {{baseUrl}}/events/{{eventId}}/media
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+  X-Confirm-Delete: true
+}

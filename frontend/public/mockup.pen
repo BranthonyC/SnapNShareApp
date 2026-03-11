@@ -1,0 +1,65 @@
+{
+  "version": "2.8",
+  "children": [
+    {
+      "type": "frame",
+      "id": "RHZpw",
+      "x": 0,
+      "y": 0,
+      "name": "Smartphone Mockup",
+      "width": 800,
+      "height": 1200,
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "./images/generated-1773120832156.png",
+        "mode": "fill"
+      }
+    },
+    {
+      "type": "frame",
+      "id": "jWPjZ",
+      "x": 0,
+      "y": 0,
+      "name": "QR Code Table",
+      "width": 1024,
+      "height": 1024,
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "./images/generated-1773120919667.png",
+        "mode": "fill"
+      }
+    },
+    {
+      "type": "frame",
+      "id": "rbURh",
+      "x": 0,
+      "y": 0,
+      "name": "Guests Uploading Image",
+      "width": 1024,
+      "height": 1024,
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "./images/generated-1773121037702.png",
+        "mode": "fill"
+      }
+    },
+    {
+      "type": "rectangle",
+      "id": "AfwTK",
+      "x": 0,
+      "y": 0,
+      "name": "Album Download",
+      "fill": {
+        "type": "image",
+        "enabled": true,
+        "url": "./images/generated-1773121158117.png",
+        "mode": "fill"
+      },
+      "width": 1920,
+      "height": 1080
+    }
+  ]
+}

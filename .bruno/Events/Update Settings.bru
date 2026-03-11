@@ -1,0 +1,23 @@
+meta {
+  name: Update Settings
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/events/{{eventId}}/settings
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
+
+body:json {
+  {
+    "galleryPrivacy": "password",
+    "allowDownloads": true,
+    "emailNotifications": true
+  }
+}

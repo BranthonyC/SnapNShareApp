@@ -1,6 +1,6 @@
-import { getAllTierConfigs } from '../../shared/config.mjs';
-import { serverError } from '../../shared/response.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getAllTierConfigs } from '/opt/nodejs/config.mjs';
+import { serverError } from '/opt/nodejs/response.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Pricing in cents (CORRECTED values)
 const PRICING = {

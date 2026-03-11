@@ -48,8 +48,13 @@ export async function getDiscounts() {
 
 export async function getSecret(name) {
   if (!secretCache[name]) {
+    // Recurrente keys are environment-specific (staging=test, prod=live)
+    const isRecurrente = name.startsWith('recurrente-');
+    const prefix = isRecurrente
+      ? (process.env.RECURRENTE_SSM_PREFIX || '/eventalbum/secrets')
+      : (process.env.SECRETS_PREFIX || '/eventalbum/secrets');
     const { Parameter } = await ssm.send(new GetParameterCommand({
-      Name: `/eventalbum/secrets/${name}`,
+      Name: `${prefix}/${name}`,
       WithDecryption: true,
     }));
     secretCache[name] = Parameter.Value;

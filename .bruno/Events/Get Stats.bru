@@ -1,0 +1,15 @@
+meta {
+  name: Get Stats
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/events/{{eventId}}/stats
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}

@@ -45,7 +45,19 @@ export function extractToken(event) {
 
 export async function authenticateRequest(event) {
   const token = extractToken(event);
-  return verifyJwt(token);
+  const claims = await verifyJwt(token);
+  if (!claims) return null;
+
+  // Multi-event host tokens (from hostVerify) have `eventIds` array instead of `eventId`.
+  // Derive `eventId` from the request path so per-endpoint auth checks work uniformly.
+  if (!claims.eventId && claims.eventIds) {
+    const pathEventId = event.pathParameters?.eventId;
+    if (pathEventId && claims.eventIds.includes(pathEventId)) {
+      claims.eventId = pathEventId;
+    }
+  }
+
+  return claims;
 }
 
 // Password hashing using HMAC-SHA256 (no bcrypt layer needed for guest passwords)

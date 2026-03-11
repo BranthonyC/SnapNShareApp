@@ -147,8 +147,65 @@
 ## Critical Deltas Applied
 - `eventalbum.app` → `eventalbum.codersatelier.com`
 - `api.eventalbum.app` → `api.eventalbum.codersatelier.com`
-- `cdn.eventalbum.app` → `cdn.eventalbum.codersatelier.com`
+- `cdn.eventalbum.app` → `eventalbum-cdn.codersatelier.com` (single-level subdomain for ACM wildcard)
 - `noreply@eventalbum.app` → `noreply@codersatelier.com`
 - Free tier → Basic tier ($1 USD / Q8 GTQ)
 - Pricing: Basic=$1, Paid=$15, Premium=$30
 - Email-first OTP (SMS fallback after 3 email failures)
+
+## Deployment — DONE (2026-02-28)
+
+**Stack: `eventalbum-dev`** in `us-east-1` via `sam deploy --profile codersatelier`
+
+| Resource | Value |
+|---|---|
+| API URL | `https://bf3ohl9kaj.execute-api.us-east-1.amazonaws.com/dev` |
+| Frontend URL | `https://eventalbum.codersatelier.com` |
+| Frontend CDN | `dddvhivtzqx7c.cloudfront.net` (ETD7K4TJ66IK6) |
+| Media CDN | `d3tkunzu75sko5.cloudfront.net` (E23ZDLZ79SPU31) |
+| DynamoDB | `EventAlbum-dev` |
+| Media Bucket | `eventalbum-media-dev` |
+| Frontend Bucket | `eventalbum-frontend-dev` |
+
+**Deployment issues resolved:**
+1. `ExposeHeaders` → `ExposedHeaders` (S3 CORS typo)
+2. `AccessLogSettings` missing `Format` (API Gateway V2 requires both)
+3. Circular dependency: replaced all `!Ref EventAlbumTable` / `!Ref MediaBucket` with `!Sub` strings
+4. ACM wildcard cert `*.codersatelier.com` doesn't cover 2-level subdomains → changed `cdn.eventalbum.` to `eventalbum-cdn.`
+5. Orphaned DDB table + Lambda layer from failed deploys → manually deleted before retry
+6. AWS profile `codersatelier` defaults to `us-east-2`, SAM deploys to `us-east-1` → must use `--region us-east-1` for all CF operations
+
+## Cypress E2E Tests — DONE
+
+**21 test files** covering all 14 documented sequence diagrams:
+
+| # | Spec File | Covers Flow |
+|---|---|---|
+| 1 | `01-landing.cy.ts` | Landing page rendering, pricing, CTA |
+| 2 | `02-guest-auth.cy.ts` | Guest password authentication |
+| 3 | `03-gallery.cy.ts` | Gallery grid, empty state, navigation |
+| 4 | `04-upload.cy.ts` | File upload via presigned URL |
+| 5 | `05-otp-verify.cy.ts` | Email OTP send/verify, error handling |
+| 6 | `06-host-auth.cy.ts` | Host email OTP login |
+| 7 | `07-dashboard.cy.ts` | Dashboard stats, navigation |
+| 8 | `08-edit-event.cy.ts` | Edit event form |
+| 9 | `09-qr-page.cy.ts` | QR code display + download |
+| 10 | `10-moderation.cy.ts` | Approve/reject flagged media |
+| 11 | `11-checkout.cy.ts` | Tier selection, checkout form |
+| 12 | `12-settings.cy.ts` | Settings toggles, danger zone |
+| 13 | `13-media-view.cy.ts` | Full-screen media, reactions, comments |
+| 14 | `14-gallery-manage.cy.ts` | Bulk select, delete, search |
+| 15 | `15-not-found.cy.ts` | 404 page |
+| 16 | `20-flow-guest-full.cy.ts` | **Seq 1a-f:** Full guest lifecycle (enter→auth→gallery→upload→react) |
+| 17 | `21-flow-guest-paid-otp.cy.ts` | **Seq 2:** Guest OTP on paid event + SMS fallback after 3 failures |
+| 18 | `22-flow-host-create-event.cy.ts` | **Seq 3+4:** Host creates event (3-step wizard) |
+| 19 | `23-flow-host-admin.cy.ts` | **Seq 5+8+9:** Host login→dashboard→edit→QR→moderation→settings |
+| 20 | `24-flow-promo-download.cy.ts` | **Seq 10+11:** Promo code + ZIP download |
+| 21 | `25-flow-comments-reactions.cy.ts` | **Seq 1f:** Reactions + comments + report |
+
+**Backend-only flows (not testable via Cypress):**
+- Seq 1e/7: Upload Processing Pipeline (S3 trigger → processUpload Lambda)
+- Seq 6: Payment webhook (Recurrente → handleWebhook Lambda)
+- Seq 12: Event Lifecycle state machine (DDB status transitions)
+- Seq 13: Email Notification Batching (EventBridge → notifyUploads)
+- Seq 14: Event Summary Email (EventBridge → eventSummary)

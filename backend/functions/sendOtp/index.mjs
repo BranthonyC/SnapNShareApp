@@ -1,12 +1,12 @@
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 
-import { getItem, putItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, unauthorized, rateLimited, notFound, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { generateOtp } from '../../shared/auth.mjs';
-import { sendOtpEmail } from '../../shared/email.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, unauthorized, rateLimited, notFound, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { generateOtp } from '/opt/nodejs/auth.mjs';
+import { sendOtpEmail } from '/opt/nodejs/email.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const sns = new SNSClient({});
 
@@ -111,7 +111,7 @@ export async function handler(event) {
     try {
       await sns.send(new PublishCommand({
         PhoneNumber: destination,
-        Message: `${code} es tu codigo de verificacion para ${ev.title} en EventAlbum. Expira en 5 minutos.`,
+        Message: `${code} es tu codigo de verificacion para ${ev.title} en Loving Memory. Expira en 5 minutos.`,
         MessageAttributes: {
           'AWS.SNS.SMS.SMSType': {
             DataType: 'String',

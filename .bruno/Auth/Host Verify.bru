@@ -1,0 +1,25 @@
+meta {
+  name: Host Verify
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/auth/host/verify
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "test@codersatelier.com",
+    "code": "123456"
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const body = res.getBody();
+    bru.setVar("hostToken", body.token);
+  }
+}

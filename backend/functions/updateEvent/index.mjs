@@ -1,8 +1,8 @@
-import { getItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, notFound, unauthorized, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { parseBody, sanitizeHtml, validateUpdateEvent } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, notFound, unauthorized, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { parseBody, sanitizeHtml, validateUpdateEvent } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Text fields that should be sanitized
 const SANITIZE_FIELDS = new Set(['title', 'description', 'footerText', 'welcomeMessage']);

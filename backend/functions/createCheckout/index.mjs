@@ -1,11 +1,11 @@
-import { getItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { getSecret } from '../../shared/config.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { getSecret } from '/opt/nodejs/config.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://eventalbum.codersatelier.com';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://snapnshare.app';
 
 // Pricing in cents
 const PRICES = {
@@ -13,6 +13,9 @@ const PRICES = {
   paid: { GTQ: 11600, USD: 1500 },
   premium: { GTQ: 23200, USD: 3000 },
 };
+
+// Tier ordering for upgrade validation
+const TIER_ORDER = { basic: 0, paid: 1, premium: 2 };
 
 const RECURRENTE_API_URL = 'https://app.recurrente.com/api/checkouts/';
 
@@ -41,7 +44,7 @@ export async function handler(event) {
 
     // ── Parse body ────────────────────────────────────────────────────
     const body = parseBody(event);
-    const { tier, currency, discountCode } = body;
+    const { tier, currency, discountCode, isUpgrade } = body;
 
     if (!tier || !['basic', 'paid', 'premium'].includes(tier)) {
       return validationError('tier must be basic, paid, or premium');
@@ -56,22 +59,47 @@ export async function handler(event) {
       return notFound('EVENT_NOT_FOUND', 'Event not found');
     }
 
-    if (ev.paymentStatus === 'paid') {
+    // ── Handle upgrade vs initial payment ──────────────────────────────
+    if (ev.paymentStatus === 'paid' && !isUpgrade) {
       return error('ALREADY_PAID', 'This event has already been paid for', 400);
     }
 
+    if (isUpgrade) {
+      if (ev.paymentStatus !== 'paid') {
+        return error('NOT_PAID', 'Event must be paid before upgrading', 400);
+      }
+      const currentRank = TIER_ORDER[ev.tier];
+      const targetRank = TIER_ORDER[tier];
+      if (currentRank === undefined || targetRank === undefined) {
+        return validationError('Invalid tier for upgrade');
+      }
+      if (targetRank <= currentRank) {
+        return validationError('Can only upgrade to a higher tier');
+      }
+    }
+
     // ── Calculate pricing ─────────────────────────────────────────────
-    const originalAmount = PRICES[tier]?.[currency];
-    if (!originalAmount) {
-      return validationError('Invalid tier/currency combination');
+    let originalAmount;
+    if (isUpgrade) {
+      const currentPrice = PRICES[ev.tier]?.[currency] || 0;
+      const targetPrice = PRICES[tier]?.[currency];
+      if (!targetPrice) {
+        return validationError('Invalid tier/currency combination');
+      }
+      originalAmount = targetPrice - currentPrice;
+    } else {
+      originalAmount = PRICES[tier]?.[currency];
+      if (!originalAmount) {
+        return validationError('Invalid tier/currency combination');
+      }
     }
 
     let discountAmount = 0;
     let discountType = null;
     let discountValue = null;
 
-    // ── Validate discount code (if provided) ──────────────────────────
-    if (discountCode) {
+    // ── Validate discount code (if provided, not for upgrades) ────────
+    if (discountCode && !isUpgrade) {
       try {
         const discountsJson = await getSecret('discounts');
         const discounts = JSON.parse(discountsJson);
@@ -132,10 +160,25 @@ export async function handler(event) {
     // ── Build checkout request ────────────────────────────────────────
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
+    const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
+    const itemName = isUpgrade
+      ? `Loving Memory Upgrade → ${tierLabel} Plan`
+      : `Loving Memory ${tierLabel} Plan`;
+
+    const metadata = {
+      event_id: eventId,
+      tier,
+      host_email: ev.hostEmail,
+    };
+    if (isUpgrade) {
+      metadata.is_upgrade = 'true';
+      metadata.previous_tier = ev.tier;
+    }
+
     const checkoutBody = {
       items: [
         {
-          name: `EventAlbum ${tier.charAt(0).toUpperCase() + tier.slice(1)} Plan`,
+          name: itemName,
           amount_in_cents: finalAmount,
           currency,
           quantity: 1,
@@ -143,11 +186,7 @@ export async function handler(event) {
       ],
       success_url: `${FRONTEND_URL}/e/${eventId}/admin?payment=success`,
       cancel_url: `${FRONTEND_URL}/e/${eventId}/admin?payment=cancelled`,
-      metadata: {
-        event_id: eventId,
-        tier,
-        host_email: ev.hostEmail,
-      },
+      metadata,
       expires_at: expiresAt,
     };
 
@@ -177,21 +216,38 @@ export async function handler(event) {
     const checkoutUrl = checkoutData.checkout_url;
 
     // ── Update event with checkout info ───────────────────────────────
-    await updateItem(
-      `EVENT#${eventId}`,
-      'METADATA',
-      'SET #checkoutId = :checkoutId, #paymentStatus = :paymentStatus, #updatedAt = :updatedAt',
-      {
-        ':checkoutId': checkoutId,
-        ':paymentStatus': 'pending',
-        ':updatedAt': new Date().toISOString(),
-      },
-      {
-        '#checkoutId': 'checkoutId',
-        '#paymentStatus': 'paymentStatus',
-        '#updatedAt': 'updatedAt',
-      },
-    );
+    if (isUpgrade) {
+      // For upgrades: store upgrade checkout ID, keep paymentStatus as 'paid'
+      await updateItem(
+        `EVENT#${eventId}`,
+        'METADATA',
+        'SET #upgradeCheckoutId = :checkoutId, #updatedAt = :updatedAt',
+        {
+          ':checkoutId': checkoutId,
+          ':updatedAt': new Date().toISOString(),
+        },
+        {
+          '#upgradeCheckoutId': 'upgradeCheckoutId',
+          '#updatedAt': 'updatedAt',
+        },
+      );
+    } else {
+      await updateItem(
+        `EVENT#${eventId}`,
+        'METADATA',
+        'SET #checkoutId = :checkoutId, #paymentStatus = :paymentStatus, #updatedAt = :updatedAt',
+        {
+          ':checkoutId': checkoutId,
+          ':paymentStatus': 'pending',
+          ':updatedAt': new Date().toISOString(),
+        },
+        {
+          '#checkoutId': 'checkoutId',
+          '#paymentStatus': 'paymentStatus',
+          '#updatedAt': 'updatedAt',
+        },
+      );
+    }
 
     logger.info('Checkout created', {
       eventId,

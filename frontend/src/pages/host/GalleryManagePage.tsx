@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Search,
   CheckSquare,
@@ -9,7 +10,8 @@ import {
   X,
   AlertTriangle,
 } from 'lucide-react';
-import PageLayout from '@/components/layout/PageLayout';
+import AdminLayout from '@/components/layout/AdminLayout';
+import PaymentGate from '@/components/admin/PaymentGate';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -24,7 +26,6 @@ import { bulkDeleteMedia, deleteMedia, searchMedia, type MediaItem } from '@/ser
 // ---------------------------------------------------------------------------
 interface SelectableTileProps {
   item: MediaItem;
-  eventId: string;
   selectionMode: boolean;
   isSelected: boolean;
   onToggleSelect: (mediaId: string) => void;
@@ -41,7 +42,7 @@ function SelectableTile({
   return (
     <div className="relative group w-full aspect-square overflow-hidden rounded-card bg-muted">
       <img
-        src={item.thumbnailUrl}
+        src={item.thumbnailUrl ?? item.url}
         alt=""
         loading="lazy"
         decoding="async"
@@ -57,12 +58,12 @@ function SelectableTile({
           className="absolute inset-0 flex items-start justify-start p-2 bg-black/10 transition-colors duration-150 focus:outline-none"
         >
           {isSelected ? (
-            <CheckSquare className="w-6 h-6 text-accent-green drop-shadow-md" aria-hidden="true" />
+            <CheckSquare className="w-6 h-6 text-accent drop-shadow-md" aria-hidden="true" />
           ) : (
             <Square className="w-6 h-6 text-white drop-shadow-md" aria-hidden="true" />
           )}
           {isSelected && (
-            <div className="absolute inset-0 border-2 border-accent-green rounded-card pointer-events-none" />
+            <div className="absolute inset-0 border-2 border-accent rounded-card pointer-events-none" />
           )}
         </button>
       )}
@@ -150,8 +151,8 @@ function ConfirmDialog({ count, onConfirm, onCancel, isLoading }: ConfirmDialogP
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-      <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-green-light mb-4">
-        <Image className="w-8 h-8 text-accent-green" aria-hidden="true" />
+      <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-light mb-4">
+        <Image className="w-8 h-8 text-accent" aria-hidden="true" />
       </span>
       <h2 className="font-heading text-xl font-semibold text-primary mb-2">
         No hay contenido
@@ -178,6 +179,7 @@ function SkeletonTile() {
 export default function GalleryManagePage() {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { isAuthenticated, role } = useAuthStore();
 
   // Auth guard: host only
@@ -187,7 +189,7 @@ export default function GalleryManagePage() {
     }
   }, [isAuthenticated, role, navigate]);
 
-  const { data: event, isLoading: eventLoading } = useEvent(eventId);
+  const { data: event } = useEvent(eventId);
   const {
     items: mediaItems,
     fetchNextPage,
@@ -209,6 +211,7 @@ export default function GalleryManagePage() {
   // Confirm dialog state
   const [showConfirm, setShowConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [singleDeleteId, setSingleDeleteId] = useState<string | null>(null);
 
   // Error state
   const [error, setError] = useState<string | null>(null);
@@ -302,20 +305,14 @@ export default function GalleryManagePage() {
 
     try {
       await bulkDeleteMedia(eventId, Array.from(selectedIds));
-      // Optimistically remove from search results
-      if (searchResults) {
-        setSearchResults((prev) =>
-          prev ? prev.filter((item) => !selectedIds.has(item.mediaId)) : null,
-        );
-      }
       setSelectedIds(new Set());
       setShowConfirm(false);
       setSelectionMode(false);
-      // Reload media — simply refetch by clearing search
       setSearchQuery('');
       setSearchResults(null);
-      // Force page reload of media query
-      window.location.reload();
+      // Invalidate React Query cache to refetch
+      queryClient.invalidateQueries({ queryKey: ['media', eventId] });
+      queryClient.invalidateQueries({ queryKey: ['event', eventId] });
     } catch {
       setError('Error al eliminar. Intenta de nuevo.');
     } finally {
@@ -324,45 +321,49 @@ export default function GalleryManagePage() {
   }
 
   async function handleSingleDelete(mediaId: string) {
-    if (!eventId) return;
-    setError(null);
-
-    try {
-      await deleteMedia(eventId, mediaId);
-      // Optimistically remove from display
-      if (searchResults) {
-        setSearchResults((prev) =>
-          prev ? prev.filter((item) => item.mediaId !== mediaId) : null,
-        );
-      }
-      // Also remove from selection if selected
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-        next.delete(mediaId);
-        return next;
-      });
-    } catch {
-      setError('Error al eliminar. Intenta de nuevo.');
-    }
+    // Show confirmation first
+    setSingleDeleteId(mediaId);
   }
 
-  const headerTitle = eventLoading
-    ? 'Cargando...'
-    : event?.title
-      ? `Gestionar galeria`
-      : 'Gestionar galeria';
+  async function confirmSingleDelete() {
+    if (!eventId || !singleDeleteId) return;
+    setError(null);
+    setIsDeleting(true);
+
+    try {
+      await deleteMedia(eventId, singleDeleteId);
+      if (searchResults) {
+        setSearchResults((prev) =>
+          prev ? prev.filter((item) => item.mediaId !== singleDeleteId) : null,
+        );
+      }
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(singleDeleteId);
+        return next;
+      });
+      setSingleDeleteId(null);
+      queryClient.invalidateQueries({ queryKey: ['media', eventId] });
+      queryClient.invalidateQueries({ queryKey: ['event', eventId] });
+    } catch {
+      setError('Error al eliminar. Intenta de nuevo.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
 
   const showSkeletons = mediaLoading && mediaItems.length === 0 && !searchQuery;
   const showEmpty = !mediaLoading && !isSearching && displayItems.length === 0;
 
   return (
-    <PageLayout
-      title={headerTitle}
-      showBack
+    <AdminLayout
+      title="Gestionar galería"
       onBack={() => navigate(`/e/${eventId}/admin`)}
+      tier={event?.tier}
     >
+      <PaymentGate eventId={eventId!} paymentStatus={event?.paymentStatus} tier={event?.tier ?? 'basic'}>
       {/* Search bar */}
-      <div className="mb-4 -mt-1">
+      <div className="mb-4">
         <Input
           placeholder="Buscar por nombre de invitado..."
           value={searchQuery}
@@ -414,7 +415,7 @@ export default function GalleryManagePage() {
 
       {/* Selection count & bulk actions */}
       {selectionMode && selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-accent-green-light rounded-card px-4 py-3 mb-4">
+        <div className="flex items-center justify-between bg-accent-light rounded-card px-4 py-3 mb-4">
           <p className="font-body text-sm font-medium text-primary">
             {selectedIds.size} seleccionado{selectedIds.size !== 1 ? 's' : ''}
           </p>
@@ -437,9 +438,9 @@ export default function GalleryManagePage() {
       )}
 
       {/* Loading state */}
-      {mediaLoading && mediaItems.length === 0 && !searchQuery && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-          {Array.from({ length: 12 }).map((_, i) => (
+      {showSkeletons && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2">
+          {Array.from({ length: 15 }).map((_, i) => (
             <SkeletonTile key={i} />
           ))}
         </div>
@@ -455,10 +456,10 @@ export default function GalleryManagePage() {
       {/* Empty state */}
       {showEmpty && !showSkeletons && <EmptyState />}
 
-      {/* Grid */}
+      {/* Grid — responsive: 3 → 4 → 5 cols */}
       {!isSearching && displayItems.length > 0 && (
         <div
-          className="grid grid-cols-3 sm:grid-cols-4 gap-2"
+          className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-2"
           role="list"
           aria-label="Galeria de fotos"
         >
@@ -466,7 +467,6 @@ export default function GalleryManagePage() {
             <div key={item.mediaId} role="listitem">
               <SelectableTile
                 item={item}
-                eventId={eventId!}
                 selectionMode={selectionMode}
                 isSelected={selectedIds.has(item.mediaId)}
                 onToggleSelect={toggleSelect}
@@ -489,7 +489,7 @@ export default function GalleryManagePage() {
         </div>
       )}
 
-      {/* Confirm dialog */}
+      {/* Bulk delete confirm dialog */}
       {showConfirm && (
         <ConfirmDialog
           count={selectedIds.size}
@@ -498,6 +498,17 @@ export default function GalleryManagePage() {
           isLoading={isDeleting}
         />
       )}
-    </PageLayout>
+
+      {/* Single delete confirm dialog */}
+      {singleDeleteId && (
+        <ConfirmDialog
+          count={1}
+          onConfirm={confirmSingleDelete}
+          onCancel={() => setSingleDeleteId(null)}
+          isLoading={isDeleting}
+        />
+      )}
+      </PaymentGate>
+    </AdminLayout>
   );
 }

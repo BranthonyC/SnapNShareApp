@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { getItem, putItem, queryItems } from '../../shared/dynamodb.mjs';
-import { ok, validationError, serverError } from '../../shared/response.mjs';
-import { generateOtp } from '../../shared/auth.mjs';
-import { sendHostOtpEmail } from '../../shared/email.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, serverError } from '/opt/nodejs/response.mjs';
+import { generateOtp } from '/opt/nodejs/auth.mjs';
+import { sendHostOtpEmail } from '/opt/nodejs/email.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Host OTP TTL: 10 minutes
 const HOST_OTP_TTL_SECONDS = 600;
@@ -61,13 +61,15 @@ export async function handler(event) {
 
     await putItem(otpItem);
 
-    // ── Send OTP email (fire-and-forget) ─────────────────────────────────
-    sendHostOtpEmail(normalizedEmail, otpCode).catch((err) => {
+    // ── Send OTP email (must await — Lambda freezes after response) ──────
+    try {
+      await sendHostOtpEmail(normalizedEmail, otpCode);
+      logger.info('Host OTP sent', { email: normalizedEmail });
+    } catch (err) {
       logger.warn('Failed to send host OTP email', { email: normalizedEmail, error: err.message });
-    });
+    }
 
-    logger.info('Host OTP sent', { email: normalizedEmail });
-
+    // Always return same response (anti-enumeration)
     return response;
   } catch (err) {
     logger.error('hostLogin error', { error: err.message, stack: err.stack });

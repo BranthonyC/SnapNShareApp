@@ -1,0 +1,22 @@
+meta {
+  name: Update Event
+  type: http
+  seq: 3
+}
+
+patch {
+  url: {{baseUrl}}/events/{{eventId}}
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
+
+body:json {
+  {
+    "title": "Updated Test Event",
+    "description": "Updated description"
+  }
+}

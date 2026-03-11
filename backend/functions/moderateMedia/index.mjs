@@ -1,10 +1,10 @@
 import { S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
-import { getItem, queryItems, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, notFound, unauthorized, forbidden, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, queryItems, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, notFound, unauthorized, forbidden, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const s3 = new S3Client({});
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET;
@@ -21,7 +21,6 @@ async function findMediaItem(eventId, mediaId) {
     {
       filterExpr: 'mediaId = :mediaId',
       exprValues: { ':mediaId': mediaId },
-      limit: 1,
     },
   );
   return items.length > 0 ? items[0] : null;

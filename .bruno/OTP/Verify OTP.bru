@@ -1,0 +1,21 @@
+meta {
+  name: Verify OTP
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/otp/verify
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{guestToken}}
+}
+
+body:json {
+  {
+    "code": "123456"
+  }
+}

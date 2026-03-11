@@ -1,10 +1,10 @@
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-import { getItem, queryItems } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const s3 = new S3Client({});
 const BUCKET = process.env.MEDIA_BUCKET || process.env.S3_BUCKET;

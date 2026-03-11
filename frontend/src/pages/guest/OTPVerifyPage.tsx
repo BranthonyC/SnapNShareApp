@@ -6,6 +6,7 @@ import Input from '@/components/ui/Input';
 import * as api from '@/services/api';
 import type { ApiError } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
+import { useEvent } from '@/hooks/useEvent';
 
 // ---------------------------------------------------------------------------
 // OTPVerifyPage — /e/:eventId/verify
@@ -31,6 +32,10 @@ export default function OTPVerifyPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
   const { isAuthenticated, verified, setVerified } = useAuthStore();
+  const { data: event } = useEvent(eventId);
+
+  // SMS OTP is only available for premium events with smsOtp enabled by host
+  const smsAvailable = event?.tier === 'premium' && (event as any).smsOtp === true;
 
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
@@ -279,8 +284,8 @@ export default function OTPVerifyPage() {
       <div className="w-full max-w-sm bg-card rounded-card shadow-card border border-border-subtle p-8">
         {/* Icon */}
         <div className="flex justify-center mb-6">
-          <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent-green-light">
-            <ShieldCheck className="w-7 h-7 text-accent-green" aria-hidden="true" />
+          <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent-light">
+            <ShieldCheck className="w-7 h-7 text-accent" aria-hidden="true" />
           </span>
         </div>
 
@@ -396,7 +401,7 @@ export default function OTPVerifyPage() {
                   'font-body text-sm',
                   resendCooldown > 0 || isLoading
                     ? 'text-tertiary cursor-not-allowed'
-                    : 'text-accent-green hover:underline focus:outline-none',
+                    : 'text-accent hover:underline focus:outline-none',
                 ].join(' ')}
               >
                 {resendCooldown > 0
@@ -405,8 +410,8 @@ export default function OTPVerifyPage() {
               </button>
             </div>
 
-            {/* SMS fallback — only after 3 failures */}
-            {failCount >= 3 && (
+            {/* SMS fallback — only after 3 failures and if event supports SMS OTP */}
+            {failCount >= 3 && smsAvailable && (
               <div className="text-center mt-2">
                 <button
                   type="button"
@@ -415,7 +420,7 @@ export default function OTPVerifyPage() {
                     setCode('');
                     setError('');
                   }}
-                  className="font-body text-sm text-accent-green hover:underline focus:outline-none"
+                  className="font-body text-sm text-accent hover:underline focus:outline-none"
                 >
                   Intentar por SMS
                 </button>
@@ -568,7 +573,7 @@ export default function OTPVerifyPage() {
                   'font-body text-sm',
                   resendCooldown > 0 || isLoading
                     ? 'text-tertiary cursor-not-allowed'
-                    : 'text-accent-green hover:underline focus:outline-none',
+                    : 'text-accent hover:underline focus:outline-none',
                 ].join(' ')}
               >
                 {resendCooldown > 0

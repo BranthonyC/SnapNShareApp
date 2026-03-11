@@ -41,12 +41,13 @@ export default function HostLoginPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Redirect if already authenticated as host
+  // Redirect if already authenticated as host → go to their dashboard
+  const storedEventId = useAuthStore((s) => s.eventId);
   useEffect(() => {
-    if (isAuthenticated() && role === 'host') {
-      navigate('/', { replace: true });
+    if (isAuthenticated() && role === 'host' && storedEventId) {
+      navigate(`/e/${storedEventId}/admin`, { replace: true });
     }
-  }, [isAuthenticated, role, navigate]);
+  }, [isAuthenticated, role, storedEventId, navigate]);
 
   // Countdown timer for OTP expiry
   useEffect(() => {
@@ -134,14 +135,13 @@ export default function HostLoginPage() {
 
     try {
       const res = await api.hostVerify(email.trim(), trimmedCode);
-      setHostAuth(res.token);
 
       if (res.events.length === 1 && res.events[0]) {
         const firstEvent = res.events[0];
-        // Store eventId for host context
-        sessionStorage.setItem('eventId', firstEvent.eventId);
+        setHostAuth(res.token, firstEvent.eventId);
         navigate(`/e/${firstEvent.eventId}/admin`, { replace: true });
       } else if (res.events.length > 1) {
+        setHostAuth(res.token);
         setEvents(res.events);
         setShowSelector(true);
       } else {
@@ -178,9 +178,10 @@ export default function HostLoginPage() {
     }
   }
 
-  function handleSelectEvent(eventId: string) {
-    sessionStorage.setItem('eventId', eventId);
-    navigate(`/e/${eventId}/admin`, { replace: true });
+  function handleSelectEvent(selectedEventId: string) {
+    localStorage.setItem('ea:host:eventId', selectedEventId);
+    useAuthStore.setState({ eventId: selectedEventId });
+    navigate(`/e/${selectedEventId}/admin`, { replace: true });
   }
 
   // Event selector screen
@@ -203,7 +204,7 @@ export default function HostLoginPage() {
                 className={[
                   'w-full text-left px-4 py-3 rounded-card border border-border-subtle',
                   'bg-white hover:bg-muted transition-colors duration-150',
-                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
                 ].join(' ')}
               >
                 <span className="font-heading text-base font-semibold text-primary block">
@@ -225,8 +226,8 @@ export default function HostLoginPage() {
       <div className="w-full max-w-sm bg-card rounded-card shadow-card border border-border-subtle p-8">
         {/* Logo / Icon */}
         <div className="flex justify-center mb-6">
-          <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent-green-light">
-            <ShieldCheck className="w-7 h-7 text-accent-green" aria-hidden="true" />
+          <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent-light">
+            <ShieldCheck className="w-7 h-7 text-accent" aria-hidden="true" />
           </span>
         </div>
 
@@ -327,7 +328,7 @@ export default function HostLoginPage() {
                   'font-body text-sm',
                   resendCooldown > 0 || isLoading
                     ? 'text-tertiary cursor-not-allowed'
-                    : 'text-accent-green hover:underline focus:outline-none',
+                    : 'text-accent hover:underline focus:outline-none',
                 ].join(' ')}
               >
                 {resendCooldown > 0

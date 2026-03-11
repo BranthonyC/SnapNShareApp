@@ -1,0 +1,21 @@
+meta {
+  name: Report Media
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/media/{{mediaId}}/report
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{guestToken}}
+}
+
+body:json {
+  {
+    "reason": "inappropriate"
+  }
+}

@@ -30,7 +30,7 @@ export default function PageLayout({
                   'flex items-center justify-center w-8 h-8 -ml-1 rounded-pill',
                   'text-secondary hover:text-primary hover:bg-muted',
                   'transition-colors duration-150 ease-in-out',
-                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green focus-visible:ring-offset-1',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1',
                 ].join(' ')}
               >
                 <ChevronLeft className="w-5 h-5" aria-hidden="true" />

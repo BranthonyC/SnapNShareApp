@@ -1,8 +1,8 @@
-import { getItem, putItemIfNotExists, queryItems, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, notFound, unauthorized, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItemIfNotExists, queryItems, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, notFound, unauthorized, forbidden, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const VALID_REASONS = ['inappropriate', 'spam', 'other'];
 const DESCRIPTION_MAX_LENGTH = 500;
@@ -18,7 +18,6 @@ async function findMediaItem(eventId, mediaId) {
     {
       filterExpr: 'mediaId = :mediaId',
       exprValues: { ':mediaId': mediaId },
-      limit: 1,
     },
   );
   return items.length > 0 ? items[0] : null;
@@ -35,6 +34,16 @@ export async function handler(event) {
     const mediaId = event.pathParameters?.mediaId;
     if (!eventId || !mediaId) {
       return validationError('eventId and mediaId path parameters are required');
+    }
+
+    // ── Cross-check JWT eventId against path eventId ─────────────────
+    if (auth.eventId && auth.eventId !== eventId) {
+      return forbidden('EVENT_MISMATCH', 'Token does not match this event');
+    }
+
+    // ── OTP verification required for guests ──────────────────────────
+    if (auth.role === 'guest' && !auth.verified) {
+      return forbidden('OTP_REQUIRED', 'Email verification is required before reporting');
     }
 
     // ── Parse & validate body ────────────────────────────────────────────

@@ -3,14 +3,17 @@ import { randomUUID } from 'node:crypto';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-import { getItem, putItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, unauthorized, forbidden, notFound, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { getTierConfig } from '../../shared/config.mjs';
-import { validateUploadRequest, parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, unauthorized, forbidden, notFound, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { getTierConfig } from '/opt/nodejs/config.mjs';
+import { validateUploadRequest, parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
-const s3 = new S3Client({});
+const s3 = new S3Client({
+  requestChecksumCalculation: 'WHEN_REQUIRED',
+  responseChecksumValidation: 'WHEN_REQUIRED',
+});
 const MEDIA_BUCKET = process.env.MEDIA_BUCKET;
 
 // Presigned URL TTL in seconds
@@ -67,7 +70,7 @@ export async function handler(event) {
       return error('VALIDATION_ERROR', 'Invalid upload request', 400, { fields: validationErrors });
     }
 
-    const { fileType, fileSize, fileName: rawFileName } = body;
+    const { fileType, fileSize, fileName: rawFileName, type: uploadType } = body;
 
     // ── Load event ─────────────────────────────────────────────────────────
     const ev = await getItem(`EVENT#${eventId}`, 'METADATA');
@@ -76,6 +79,45 @@ export async function handler(event) {
     }
     if (ev.status === 'locked') {
       return forbidden('EVENT_LOCKED', 'This event is currently locked');
+    }
+
+    // ── Cover image upload (host only, no upload count, no MEDIA record) ──
+    if (uploadType === 'cover') {
+      if (role !== 'host') {
+        return forbidden('HOST_ONLY', 'Only hosts can upload cover images');
+      }
+
+      const category = mimeCategory(fileType);
+      if (category !== 'image') {
+        return error('INVALID_TYPE', 'Cover must be an image', 400);
+      }
+
+      // 10 MB limit for cover images
+      if (fileSize > 10 * 1024 * 1024) {
+        return error('FILE_TOO_LARGE', 'Cover image must be under 10MB', 413);
+      }
+
+      const ext = MIME_TO_EXT[fileType] || 'jpg';
+      const s3Key = `events/${eventId}/cover.${ext}`;
+
+      const putCommand = new PutObjectCommand({
+        Bucket: MEDIA_BUCKET,
+        Key: s3Key,
+        ContentType: fileType,
+        ContentLength: fileSize,
+        Tagging: `tier=${ev.tier}&eventId=${eventId}&type=cover`,
+      });
+
+      const uploadUrl = await getSignedUrl(s3, putCommand, { expiresIn: PRESIGNED_URL_TTL });
+
+      logger.info('Cover upload URL generated', { eventId, fileType, fileSize });
+
+      return ok({
+        uploadUrl,
+        mediaId: null,
+        s3Key,
+        expiresIn: PRESIGNED_URL_TTL,
+      });
     }
 
     // ── Tier config (from SSM cache) ───────────────────────────────────────

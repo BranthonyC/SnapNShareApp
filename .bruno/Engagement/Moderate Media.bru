@@ -1,0 +1,21 @@
+meta {
+  name: Moderate Media
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/media/{{mediaId}}/moderate
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
+
+body:json {
+  {
+    "action": "approve"
+  }
+}

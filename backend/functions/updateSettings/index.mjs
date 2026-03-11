@@ -1,8 +1,8 @@
-import { getItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, notFound, unauthorized, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { parseBody, validateSettings } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, notFound, unauthorized, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { parseBody, validateSettings } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Allowed settings fields
 const ALLOWED_SETTINGS = new Set([
@@ -13,6 +13,7 @@ const ALLOWED_SETTINGS = new Set([
   'autoApprove',
   'colorTheme',
   'showDateTime',
+  'smsOtp',
 ]);
 
 export async function handler(event) {

@@ -44,7 +44,7 @@ function StatusIcon({ status }: { status: FileStatus }) {
     case 'uploading':
       return <Spinner size="sm" />;
     case 'done':
-      return <CheckCircle className="w-4 h-4 text-accent-green" aria-hidden="true" />;
+      return <CheckCircle className="w-4 h-4 text-accent" aria-hidden="true" />;
     case 'error':
       return <AlertCircle className="w-4 h-4 text-accent-coral" aria-hidden="true" />;
     default:
@@ -68,26 +68,49 @@ export default function UploadPage() {
   const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   // Auth guard
   useEffect(() => {
     if (!isAuthenticated() || storedEventId !== eventId) {
       navigate(`/e/${eventId}`, { replace: true });
+      return;
     }
-  }, [isAuthenticated, storedEventId, eventId, navigate]);
+    // Redirect unverified guests to gallery (which shows OTP sheet inline)
+    if (!verified && role === 'guest') {
+      navigate(`/e/${eventId}/gallery`, { replace: true });
+    }
+  }, [isAuthenticated, storedEventId, eventId, navigate, verified, role]);
 
-  // Check if OTP verification is needed
-  const needsOtp =
-    (event?.tier === 'paid' || event?.tier === 'premium') &&
-    !verified &&
-    role === 'guest';
+  // OTP verification is required for all guests before uploading
+  const needsOtp = !verified && role === 'guest';
 
   // ---------------------------------------------------------------------------
   // File handling
   // ---------------------------------------------------------------------------
 
+  const [limitError, setLimitError] = useState('');
+
   function addFiles(files: FileList | File[]) {
-    const newEntries: FileEntry[] = Array.from(files).map((file) => ({
+    setLimitError('');
+    const remaining = uploadLimit - uploadCount - entries.length;
+    const accepted = Array.from(files).slice(0, Math.max(0, remaining));
+
+    if (accepted.length < files.length) {
+      setLimitError(`Solo puedes subir ${Math.max(0, remaining)} foto${remaining === 1 ? '' : 's'} más.`);
+    }
+    if (accepted.length === 0) return;
+
+    // Filter by allowed types
+    const allowedTypes = event?.allowVideo
+      ? ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'video/mp4', 'video/quicktime', 'video/webm']
+      : ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+
+    const validFiles = accepted.filter(
+      (f) => f.type !== 'image/svg+xml' && allowedTypes.some((t) => f.type.startsWith(t.split('/')[0] ?? '')),
+    );
+
+    const newEntries: FileEntry[] = validFiles.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       file,
       previewUrl: URL.createObjectURL(file),
@@ -172,7 +195,12 @@ export default function UploadPage() {
     if (pending.length === 0) return;
 
     setIsUploading(true);
-    await Promise.all(pending.map(uploadEntry));
+    // Process in batches of 3 to avoid overwhelming the browser
+    const MAX_CONCURRENT = 3;
+    for (let i = 0; i < pending.length; i += MAX_CONCURRENT) {
+      const batch = pending.slice(i, i + MAX_CONCURRENT);
+      await Promise.all(batch.map(uploadEntry));
+    }
     setIsUploading(false);
   }
 
@@ -202,6 +230,13 @@ export default function UploadPage() {
         </p>
       )}
 
+      {/* Upload limit error */}
+      {limitError && (
+        <div className="mb-4 p-3 rounded-card bg-red-50 border border-accent-coral" role="alert">
+          <p className="font-body text-sm text-accent-coral">{limitError}</p>
+        </div>
+      )}
+
       {/* OTP gate */}
       {needsOtp && (
         <div className="mb-6 rounded-card border border-accent-gold bg-amber-50 p-4">
@@ -213,7 +248,7 @@ export default function UploadPage() {
           </p>
           <Link
             to={`/e/${eventId}/verify`}
-            className="inline-flex items-center gap-1 font-body text-sm font-semibold text-accent-green hover:underline focus:outline-none"
+            className="inline-flex items-center gap-1 font-body text-sm font-semibold text-accent hover:underline focus:outline-none"
           >
             Verificar ahora →
           </Link>
@@ -234,15 +269,15 @@ export default function UploadPage() {
           'flex flex-col items-center justify-center gap-3',
           'rounded-card border-2 border-dashed p-8 cursor-pointer',
           'transition-colors duration-150',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
           dragOver
-            ? 'border-accent-green bg-accent-green-light'
-            : 'border-border-strong bg-muted hover:border-accent-green hover:bg-accent-green-light',
+            ? 'border-accent bg-accent-light'
+            : 'border-border-strong bg-muted hover:border-accent hover:bg-accent-light',
           isUploading ? 'pointer-events-none opacity-60' : '',
         ].join(' ')}
       >
         <span className="inline-flex items-center justify-center w-12 h-12 rounded-card bg-white shadow-card">
-          <ImagePlus className="w-6 h-6 text-accent-green" aria-hidden="true" />
+          <ImagePlus className="w-6 h-6 text-accent" aria-hidden="true" />
         </span>
         <div className="text-center">
           <p className="font-body text-sm font-medium text-primary">
@@ -258,9 +293,9 @@ export default function UploadPage() {
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            fileInputRef.current?.click();
+            cameraInputRef.current?.click();
           }}
-          className="inline-flex items-center gap-2 font-body text-sm font-medium text-accent-green hover:underline focus:outline-none"
+          className="inline-flex items-center gap-2 font-body text-sm font-medium text-accent hover:underline focus:outline-none"
           disabled={isUploading}
         >
           <Camera className="w-4 h-4" aria-hidden="true" />
@@ -268,18 +303,29 @@ export default function UploadPage() {
         </button>
       </div>
 
-      {/* Hidden file inputs */}
+      {/* Hidden file input — gallery/file picker (no capture) */}
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
-        capture="environment"
+        accept={event?.allowVideo ? 'image/*,video/*' : 'image/*'}
         multiple
         className="sr-only"
         aria-hidden="true"
         onChange={(e) => {
           if (e.target.files?.length) addFiles(e.target.files);
-          // Reset so selecting the same file again triggers onChange
+          e.target.value = '';
+        }}
+      />
+      {/* Hidden camera input — direct camera capture */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        aria-hidden="true"
+        onChange={(e) => {
+          if (e.target.files?.length) addFiles(e.target.files);
           e.target.value = '';
         }}
       />

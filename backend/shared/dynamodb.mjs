@@ -7,6 +7,7 @@ import {
   DeleteCommand,
   QueryCommand,
   BatchWriteCommand,
+  ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 
 const client = new DynamoDBClient({});
@@ -86,6 +87,25 @@ export async function queryItems(pk, skPrefix, { limit, cursor, indexName, scanF
       ? Buffer.from(JSON.stringify(LastEvaluatedKey)).toString('base64url')
       : null,
   };
+}
+
+export async function scanItems({ filterExpr, exprValues, exprNames, limit } = {}) {
+  const allItems = [];
+  let lastKey = undefined;
+  do {
+    const params = {
+      TableName: TABLE,
+      ...(filterExpr && { FilterExpression: filterExpr }),
+      ...(exprValues && { ExpressionAttributeValues: exprValues }),
+      ...(exprNames && { ExpressionAttributeNames: exprNames }),
+      ...(lastKey && { ExclusiveStartKey: lastKey }),
+    };
+    const { Items, LastEvaluatedKey } = await docClient.send(new ScanCommand(params));
+    allItems.push(...(Items || []));
+    lastKey = LastEvaluatedKey;
+    if (limit && allItems.length >= limit) break;
+  } while (lastKey);
+  return limit ? allItems.slice(0, limit) : allItems;
 }
 
 export async function batchDelete(keys) {

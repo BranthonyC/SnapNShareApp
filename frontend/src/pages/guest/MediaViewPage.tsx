@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Heart, ThumbsUp, PartyPopper, MessageCircle, Send } from 'lucide-react';
 import Spinner from '@/components/ui/Spinner';
 import { useMedia } from '@/hooks/useMedia';
 import { useAuthStore } from '@/stores/authStore';
 import * as api from '@/services/api';
-import type { MediaItem } from '@/services/api';
+import type { MediaItem, CommentItem } from '@/services/api';
 
 // ---------------------------------------------------------------------------
 // Helper: relative time in Spanish
@@ -25,6 +25,38 @@ function timeAgo(dateStr: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Avatar color palette — deterministic from name
+// ---------------------------------------------------------------------------
+const AVATAR_COLORS = [
+  'bg-rose-500',
+  'bg-orange-500',
+  'bg-amber-500',
+  'bg-emerald-500',
+  'bg-teal-500',
+  'bg-cyan-500',
+  'bg-blue-500',
+  'bg-indigo-500',
+  'bg-violet-500',
+  'bg-fuchsia-500',
+];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length] ?? 'bg-blue-500';
+}
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    return (parts[0][0]! + parts[1][0]!).toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+// ---------------------------------------------------------------------------
 // Reaction emoji config
 // ---------------------------------------------------------------------------
 const REACTIONS = [
@@ -34,18 +66,73 @@ const REACTIONS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
-// Comment interface
+// Avatar component
 // ---------------------------------------------------------------------------
-interface Comment {
-  commentId: string;
-  text: string;
-  nickname: string;
-  createdAt: string;
+function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }) {
+  const sizeClass = size === 'sm' ? 'w-8 h-8 text-xs' : 'w-10 h-10 text-sm';
+  return (
+    <div
+      className={`${sizeClass} ${getAvatarColor(name)} rounded-full flex items-center justify-center text-white font-semibold flex-shrink-0`}
+    >
+      {getInitials(name)}
+    </div>
+  );
 }
 
-interface CommentsResponse {
-  items: Comment[];
-  nextCursor: string | null;
+// ---------------------------------------------------------------------------
+// CommentBubble — single comment with avatar, text, time, and like
+// ---------------------------------------------------------------------------
+interface CommentBubbleProps {
+  comment: CommentItem;
+  onLike: (commentId: string) => void;
+  isLiking: boolean;
+  isLiked: boolean;
+}
+
+function CommentBubble({ comment, onLike, isLiking, isLiked }: CommentBubbleProps) {
+  return (
+    <div className="flex gap-2.5 group">
+      <Avatar name={comment.authorName} size="sm" />
+      <div className="flex-1 min-w-0">
+        <div className="bg-muted rounded-2xl rounded-tl-md px-3.5 py-2.5">
+          <div className="flex items-baseline gap-2 mb-0.5">
+            <span className="font-body text-sm font-semibold text-primary truncate">
+              {comment.authorName}
+            </span>
+            <span className="font-body text-[11px] text-tertiary flex-shrink-0">
+              {timeAgo(comment.createdAt)}
+            </span>
+          </div>
+          <p className="font-body text-sm text-secondary leading-relaxed break-words">
+            {comment.text}
+          </p>
+        </div>
+        {/* Like row */}
+        <div className="flex items-center gap-3 mt-1 ml-1">
+          <button
+            type="button"
+            onClick={() => onLike(comment.commentId)}
+            disabled={isLiking}
+            className={[
+              'flex items-center gap-1 font-body text-xs transition-colors',
+              isLiked
+                ? 'text-accent-coral font-medium'
+                : 'text-tertiary hover:text-accent-coral',
+              'focus:outline-none disabled:opacity-50',
+            ].join(' ')}
+          >
+            <Heart
+              className={`w-3 h-3 ${isLiked ? 'fill-current' : ''}`}
+              aria-hidden="true"
+            />
+            {comment.likeCount > 0 && (
+              <span>{comment.likeCount}</span>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -54,7 +141,9 @@ interface CommentsResponse {
 export default function MediaViewPage() {
   const { eventId, mediaId } = useParams<{ eventId: string; mediaId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isAuthenticated } = useAuthStore();
+  const cameFromAdmin = (location.state as { from?: string })?.from === 'admin';
 
   // Auth guard
   useEffect(() => {
@@ -75,11 +164,14 @@ export default function MediaViewPage() {
 
   // Comment sheet
   const [showComments, setShowComments] = useState(false);
-  const [comments, setComments] = useState<Comment[]>([]);
+  const [comments, setComments] = useState<CommentItem[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
+  const [likingIds, setLikingIds] = useState<Set<string>>(new Set());
+  const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const commentInputRef = useRef<HTMLInputElement>(null);
+  const commentsEndRef = useRef<HTMLDivElement>(null);
 
   // Touch swipe state
   const touchStartX = useRef(0);
@@ -105,7 +197,7 @@ export default function MediaViewPage() {
     if (!eventId || !mediaId) return;
     setCommentsLoading(true);
     try {
-      const res = (await api.listComments(eventId, mediaId)) as CommentsResponse;
+      const res = await api.listComments(eventId, mediaId);
       setComments(res.items || []);
     } catch {
       // Silent fail
@@ -135,7 +227,7 @@ export default function MediaViewPage() {
   // Keyboard navigation
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (showComments) return; // Don't navigate while commenting
+      if (showComments) return;
       if (e.key === 'ArrowLeft') goToPrev();
       else if (e.key === 'ArrowRight') goToNext();
       else if (e.key === 'Escape') handleClose();
@@ -166,7 +258,11 @@ export default function MediaViewPage() {
   }
 
   function handleClose() {
-    navigate(`/e/${eventId}/gallery`);
+    if (cameFromAdmin) {
+      navigate(`/e/${eventId}/admin`);
+    } else {
+      navigate(`/e/${eventId}/gallery`);
+    }
   }
 
   // Reactions
@@ -204,6 +300,54 @@ export default function MediaViewPage() {
     }
   }
 
+  // Like comment
+  async function handleLikeComment(commentId: string) {
+    if (!eventId || !mediaId) return;
+
+    const wasLiked = likedIds.has(commentId);
+
+    // Optimistic update
+    setLikingIds((prev) => new Set(prev).add(commentId));
+    setLikedIds((prev) => {
+      const next = new Set(prev);
+      if (wasLiked) next.delete(commentId);
+      else next.add(commentId);
+      return next;
+    });
+    setComments((prev) =>
+      prev.map((c) =>
+        c.commentId === commentId
+          ? { ...c, likeCount: Math.max(0, c.likeCount + (wasLiked ? -1 : 1)) }
+          : c,
+      ),
+    );
+
+    try {
+      await api.likeComment(eventId, mediaId, commentId);
+    } catch {
+      // Revert on failure
+      setLikedIds((prev) => {
+        const next = new Set(prev);
+        if (wasLiked) next.add(commentId);
+        else next.delete(commentId);
+        return next;
+      });
+      setComments((prev) =>
+        prev.map((c) =>
+          c.commentId === commentId
+            ? { ...c, likeCount: Math.max(0, c.likeCount + (wasLiked ? 1 : -1)) }
+            : c,
+        ),
+      );
+    } finally {
+      setLikingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(commentId);
+        return next;
+      });
+    }
+  }
+
   // Add comment
   async function handleAddComment(e: React.FormEvent) {
     e.preventDefault();
@@ -214,6 +358,8 @@ export default function MediaViewPage() {
       await api.addComment(eventId, mediaId, commentText.trim());
       setCommentText('');
       await loadComments();
+      // Scroll to bottom after new comment
+      setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch {
       // Silent fail
     } finally {
@@ -238,7 +384,7 @@ export default function MediaViewPage() {
         <button
           type="button"
           onClick={handleClose}
-          className="font-body text-sm text-accent-green hover:underline"
+          className="font-body text-sm text-accent hover:underline"
         >
           Volver a la galería
         </button>
@@ -254,7 +400,7 @@ export default function MediaViewPage() {
           type="button"
           onClick={handleClose}
           aria-label="Cerrar"
-          className="flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green"
+          className="flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
         >
           <X className="w-5 h-5" />
         </button>
@@ -280,7 +426,7 @@ export default function MediaViewPage() {
             type="button"
             onClick={goToPrev}
             aria-label="Foto anterior"
-            className="absolute left-2 top-1/2 -translate-y-1/2 z-10 hidden sm:flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green"
+            className="absolute left-2 top-1/2 -translate-y-1/2 z-10 hidden sm:flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
@@ -288,10 +434,12 @@ export default function MediaViewPage() {
 
         {currentItem && (
           <img
-            src={currentItem.fullUrl}
+            src={currentItem.url}
             alt={`Foto subida por ${currentItem.uploadedBy}`}
             className="max-w-full max-h-full object-contain select-none"
             draggable={false}
+            onContextMenu={(e) => e.preventDefault()}
+            style={{ WebkitTouchCallout: 'none' }}
           />
         )}
 
@@ -301,7 +449,7 @@ export default function MediaViewPage() {
             type="button"
             onClick={goToNext}
             aria-label="Foto siguiente"
-            className="absolute right-2 top-1/2 -translate-y-1/2 z-10 hidden sm:flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green"
+            className="absolute right-2 top-1/2 -translate-y-1/2 z-10 hidden sm:flex items-center justify-center w-10 h-10 rounded-pill bg-black/40 text-white hover:bg-black/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <ChevronRight className="w-6 h-6" />
           </button>
@@ -329,9 +477,9 @@ export default function MediaViewPage() {
               className={[
                 'flex items-center gap-1.5 px-3 py-1.5 rounded-pill transition-colors',
                 activeReactions.has(emoji)
-                  ? 'bg-accent-green/20 text-accent-green'
+                  ? 'bg-accent/20 text-accent'
                   : 'bg-white/10 text-white/80 hover:bg-white/20',
-                'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green',
+                'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
               ].join(' ')}
             >
               <Icon className="w-4 h-4" />
@@ -349,7 +497,7 @@ export default function MediaViewPage() {
             type="button"
             onClick={() => setShowComments(true)}
             aria-label="Comentarios"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-pill bg-white/10 text-white/80 hover:bg-white/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-pill bg-white/10 text-white/80 hover:bg-white/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <MessageCircle className="w-4 h-4" />
             <span className="font-body text-xs font-medium">
@@ -371,15 +519,31 @@ export default function MediaViewPage() {
           />
 
           {/* Sheet */}
-          <div className="relative bg-card rounded-t-modal max-h-[70vh] flex flex-col animate-slide-up">
+          <div className="relative bg-card rounded-t-modal max-h-[75vh] flex flex-col animate-slide-up">
             {/* Handle */}
             <div className="flex justify-center py-2">
               <div className="w-10 h-1 rounded-pill bg-border-strong" />
             </div>
 
-            <h3 className="font-heading text-base font-semibold text-primary px-4 pb-3">
-              Comentarios
-            </h3>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 pb-3">
+              <h3 className="font-heading text-base font-semibold text-primary">
+                Comentarios
+                {comments.length > 0 && (
+                  <span className="font-body text-sm font-normal text-tertiary ml-2">
+                    {comments.length}
+                  </span>
+                )}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowComments(false)}
+                aria-label="Cerrar"
+                className="flex items-center justify-center w-8 h-8 rounded-full text-tertiary hover:text-primary hover:bg-muted transition-colors focus:outline-none"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
             {/* Comments list */}
             <div className="flex-1 overflow-y-auto px-4 pb-3">
@@ -388,26 +552,27 @@ export default function MediaViewPage() {
                   <Spinner size="md" />
                 </div>
               ) : comments.length === 0 ? (
-                <p className="font-body text-sm text-secondary text-center py-8">
-                  Sin comentarios aún. Sé el primero.
-                </p>
+                <div className="flex flex-col items-center justify-center py-10">
+                  <MessageCircle className="w-10 h-10 text-border-strong mb-3" aria-hidden="true" />
+                  <p className="font-body text-sm text-secondary text-center">
+                    Sin comentarios aún
+                  </p>
+                  <p className="font-body text-xs text-tertiary text-center mt-1">
+                    Sé el primero en comentar
+                  </p>
+                </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {comments.map((comment) => (
-                    <div key={comment.commentId}>
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-body text-sm font-medium text-primary">
-                          {comment.nickname}
-                        </span>
-                        <span className="font-body text-xs text-tertiary">
-                          {timeAgo(comment.createdAt)}
-                        </span>
-                      </div>
-                      <p className="font-body text-sm text-secondary mt-0.5">
-                        {comment.text}
-                      </p>
-                    </div>
+                    <CommentBubble
+                      key={comment.commentId}
+                      comment={comment}
+                      onLike={handleLikeComment}
+                      isLiking={likingIds.has(comment.commentId)}
+                      isLiked={likedIds.has(comment.commentId)}
+                    />
                   ))}
+                  <div ref={commentsEndRef} />
                 </div>
               )}
             </div>
@@ -415,39 +580,43 @@ export default function MediaViewPage() {
             {/* Add comment input */}
             <form
               onSubmit={handleAddComment}
-              className="flex items-center gap-2 px-4 py-3 border-t border-border-subtle"
+              className="flex items-center gap-2.5 px-4 py-3 border-t border-border-subtle bg-card"
             >
-              <input
-                ref={commentInputRef}
-                type="text"
-                placeholder="Escribe un comentario..."
-                value={commentText}
-                onChange={(e) => setCommentText(e.target.value)}
-                disabled={sendingComment}
-                className={[
-                  'flex-1 block border rounded-card px-3 py-2 font-body text-sm text-primary',
-                  'placeholder:text-tertiary bg-white',
-                  'transition-colors duration-150',
-                  'focus:outline-none focus:ring-2 focus:ring-accent-green-light focus:border-accent-green',
-                  'border-border-strong',
-                  'disabled:opacity-50',
-                ].join(' ')}
-              />
-              <button
-                type="submit"
-                disabled={sendingComment || !commentText.trim()}
-                aria-label="Enviar comentario"
-                className={[
-                  'flex items-center justify-center w-10 h-10 rounded-pill',
-                  'bg-accent-green text-white',
-                  'hover:bg-accent-green-dark',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'transition-colors duration-150',
-                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green focus-visible:ring-offset-2',
-                ].join(' ')}
-              >
-                <Send className="w-4 h-4" />
-              </button>
+              <Avatar name={useAuthStore.getState().nickname || 'Invitado'} size="sm" />
+              <div className="flex-1 relative">
+                <input
+                  ref={commentInputRef}
+                  type="text"
+                  placeholder="Escribe un comentario..."
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  disabled={sendingComment}
+                  className={[
+                    'w-full border rounded-pill px-4 py-2.5 pr-11 font-body text-sm text-primary',
+                    'placeholder:text-tertiary bg-muted',
+                    'transition-colors duration-150',
+                    'focus:outline-none focus:ring-2 focus:ring-accent-light focus:border-accent',
+                    'border-border-subtle',
+                    'disabled:opacity-50',
+                  ].join(' ')}
+                />
+                <button
+                  type="submit"
+                  disabled={sendingComment || !commentText.trim()}
+                  aria-label="Enviar comentario"
+                  className={[
+                    'absolute right-1.5 top-1/2 -translate-y-1/2',
+                    'flex items-center justify-center w-8 h-8 rounded-full',
+                    'bg-accent text-white',
+                    'hover:bg-accent-dark',
+                    'disabled:opacity-30 disabled:cursor-not-allowed',
+                    'transition-all duration-150',
+                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
+                  ].join(' ')}
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </form>
           </div>
         </div>

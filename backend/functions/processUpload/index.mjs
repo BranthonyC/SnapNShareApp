@@ -17,12 +17,15 @@
  *  - If NSFW score > threshold → set status='pending_review' + notify host
  */
 
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { RekognitionClient, DetectModerationLabelsCommand } from '@aws-sdk/client-rekognition';
 
-import { getItem, updateItem, queryItems } from '../../shared/dynamodb.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { sendModerationAlertEmail } from '/opt/nodejs/email.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const s3 = new S3Client({});
+const rekognition = new RekognitionClient({});
 
 // ── Magic byte signatures ──────────────────────────────────────────────────────
 // Each entry: { mime, check: (buf) => boolean }
@@ -113,14 +116,14 @@ function parseS3Key(key) {
  */
 async function findMediaRecord(eventId, mediaId) {
   // The SK pattern is MEDIA#{uploadedAt}#{mediaId}
-  // We need to scan with a filter since we don't know the exact timestamp.
+  // We query all MEDIA# items and filter by mediaId since we don't know the exact timestamp.
+  // Note: do NOT use limit with filterExpr — DynamoDB applies limit before filter.
   const result = await queryItems(
     `EVENT#${eventId}`,
     'MEDIA#',
     {
       filterExpr: 'mediaId = :mediaId',
       exprValues: { ':mediaId': mediaId },
-      limit: 1,
     },
   );
   return result.items[0] ?? null;
@@ -168,14 +171,14 @@ async function processRecord(record) {
   } catch (err) {
     logger.error('Failed to fetch magic bytes', { key, error: err.message });
     // Mark as failed so it is not surfaced to guests
-    await safeSetStatus(eventId, mediaId, 'hidden', 'magic_byte_fetch_failed');
+    await safeSetStatus(eventId, mediaId, 'hidden', 'magic_byte_fetch_failed', key);
     return;
   }
 
   const detectedMime = detectMimeFromBuffer(magicBuf);
   if (!detectedMime) {
     logger.warn('File failed magic byte validation — marking hidden', { key, mediaId });
-    await safeSetStatus(eventId, mediaId, 'hidden', 'invalid_file_type');
+    await safeSetStatus(eventId, mediaId, 'hidden', 'invalid_file_type', key);
     return;
   }
 
@@ -199,42 +202,88 @@ async function processRecord(record) {
       declared: mediaRecord.fileType,
       detected: detectedMime,
     });
-    await safeSetStatus(eventId, mediaId, 'hidden', 'mime_mismatch');
+    await safeSetStatus(eventId, mediaId, 'hidden', 'mime_mismatch', key);
     return;
   }
 
-  // ── Update MEDIA record → 'visible' ───────────────────────────────────
+  // ── Load event record to check autoApprove setting ──────────────────
   const sk = mediaRecord.SK;
+  const eventRecord = await getItem(`EVENT#${eventId}`, 'METADATA');
+
+  // Determine initial status based on autoApprove setting.
+  // When autoApprove is OFF, media starts as pending_review and requires host approval.
+  const autoApprove = eventRecord?.autoApprove !== false; // default true for backwards compat
+  const initialStatus = autoApprove ? 'visible' : 'pending_review';
 
   await updateItem(
     `EVENT#${eventId}`,
     sk,
-    'SET #status = :visible, detectedMime = :mime',
-    { ':visible': 'visible', ':mime': detectedMime },
+    'SET #status = :status, detectedMime = :mime',
+    { ':status': initialStatus, ':mime': detectedMime },
     { '#status': 'status' },
     null,
   );
 
-  logger.info('Media marked visible', { eventId, mediaId, detectedMime });
+  logger.info(`Media marked ${initialStatus}`, { eventId, mediaId, detectedMime, autoApprove });
 
-  // TODO (Phase 2 — sharp layer required):
-  // 1. Download full object from S3 into a Buffer
-  // 2. Use sharp to generate 300px thumbnail → upload to events/{eventId}/thumbs/{mediaId}.jpg
-  // 3. Use sharp to generate 800px medium   → upload to events/{eventId}/thumbs/{mediaId}_md.jpg
-  // 4. Read width/height metadata from sharp output
-  // 5. Update MEDIA record: thumbnailKey, mediumKey, width, height
+  // ── Premium NSFW moderation via Rekognition ─────────────────────────
+  // Only run for images on Premium tier when autoApprove is OFF
+  if (detectedCategory === 'image' && eventRecord?.tier === 'premium' && !autoApprove) {
+    try {
+      const modResult = await rekognition.send(new DetectModerationLabelsCommand({
+        Image: { S3Object: { Bucket: bucket, Name: key } },
+        MinConfidence: 60,
+      }));
 
-  // TODO (Phase 3 — Premium NSFW moderation):
-  // 1. Load event record to check tier === 'premium' && autoApprove === false
-  // 2. Call rekognition.DetectModerationLabels({ Image: { S3Object: { Bucket, Name: key } }, MinConfidence: 70 })
-  // 3. If labels found with Confidence > threshold: set status='pending_review', moderationLabels=[...]
-  // 4. Notify host via SES if emailNotifications === true
+      const labels = modResult.ModerationLabels || [];
+      if (labels.length > 0) {
+        const highConfidence = labels.some((l) => l.Confidence >= 80);
+        const newStatus = highConfidence ? 'hidden' : 'pending_review';
+        const labelNames = labels.map((l) => `${l.Name} (${Math.round(l.Confidence)}%)`);
+
+        await updateItem(
+          `EVENT#${eventId}`,
+          sk,
+          'SET #status = :status, moderationLabels = :labels',
+          { ':status': newStatus, ':labels': labelNames },
+          { '#status': 'status' },
+          null,
+        );
+
+        logger.warn('Content flagged by Rekognition', {
+          eventId, mediaId, labels: labelNames, status: newStatus,
+        });
+
+        // Notify host via email
+        if (eventRecord.emailNotifications && eventRecord.hostEmail) {
+          try {
+            await sendModerationAlertEmail(eventRecord.hostEmail, {
+              eventId,
+              title: eventRecord.title || eventId,
+              uploaderName: mediaRecord.uploaderName || 'Invitado',
+              reason: labelNames.join(', '),
+              time: new Date().toISOString(),
+            });
+          } catch (emailErr) {
+            logger.warn('Failed to send moderation alert email', {
+              eventId, error: emailErr.message,
+            });
+          }
+        }
+      }
+    } catch (rekErr) {
+      logger.error('Rekognition moderation check failed', {
+        eventId, mediaId, error: rekErr.message,
+      });
+      // Non-fatal — content stays in pending_review
+    }
+  }
 }
 
 /**
  * Best-effort status update — logs on failure rather than throwing.
  */
-async function safeSetStatus(eventId, mediaId, status, reason) {
+async function safeSetStatus(eventId, mediaId, status, reason, s3Key) {
   try {
     const mediaRecord = await findMediaRecord(eventId, mediaId);
     if (!mediaRecord) return;
@@ -247,6 +296,30 @@ async function safeSetStatus(eventId, mediaId, status, reason) {
       { '#status': 'status' },
       null,
     );
+
+    // If file is invalid (hidden due to magic bytes), delete from S3 + decrement counter
+    if (status === 'hidden' && s3Key) {
+      const bucket = process.env.MEDIA_BUCKET;
+      try {
+        await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: s3Key }));
+        logger.info('Deleted invalid file from S3', { s3Key });
+      } catch (delErr) {
+        logger.error('Failed to delete invalid file from S3', { s3Key, error: delErr.message });
+      }
+
+      // Decrement event uploadCount
+      try {
+        await updateItem(
+          `EVENT#${eventId}`,
+          'METADATA',
+          'SET uploadCount = uploadCount - :one',
+          { ':one': 1 },
+        );
+        logger.info('Decremented uploadCount for invalid file', { eventId, mediaId });
+      } catch (decErr) {
+        logger.error('Failed to decrement uploadCount', { eventId, error: decErr.message });
+      }
+    }
   } catch (err) {
     logger.error('safeSetStatus failed', { eventId, mediaId, status, error: err.message });
   }

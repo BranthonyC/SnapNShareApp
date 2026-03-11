@@ -1,0 +1,15 @@
+meta {
+  name: Get QR Stats
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/events/{{eventId}}/qr-stats
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}

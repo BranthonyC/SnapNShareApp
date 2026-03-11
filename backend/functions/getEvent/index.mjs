@@ -1,7 +1,7 @@
-import { getItem } from '../../shared/dynamodb.mjs';
-import { ok, unauthorized, notFound, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, unauthorized, notFound, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || '';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://eventalbum.codersatelier.com';
@@ -22,6 +22,13 @@ const HOST_ONLY_FIELDS = new Set([
 
 // Internal DynamoDB key fields to strip from all responses
 const INTERNAL_FIELDS = new Set(['PK', 'SK', 'GSI1PK', 'GSI1SK', 'GSI2PK', 'GSI2SK']);
+
+// Public fields returned to unauthenticated requests (lobby preview)
+const PUBLIC_FIELDS = new Set([
+  'eventId', 'title', 'description', 'coverUrl', 'footerText', 'welcomeMessage',
+  'location', 'schedule', 'startDate', 'endDate', 'hostName', 'status', 'tier',
+  'colorTheme', 'uploadCount', 'uploadLimit',
+]);
 
 /**
  * Build a CloudFront URL for an S3 key.
@@ -61,22 +68,14 @@ function buildEventResponse(ev, role) {
 
 export async function handler(event) {
   try {
-    // ── Auth ───────────────────────────────────────────────────────────────
-    const claims = await authenticateRequest(event);
-    if (!claims) {
-      return unauthorized();
-    }
-
     // ── Path param ─────────────────────────────────────────────────────────
     const eventId = event.pathParameters?.eventId;
     if (!eventId) {
       return notFound('EVENT_NOT_FOUND', 'Event not found');
     }
 
-    // Ensure JWT belongs to this event (prevent token reuse across events)
-    if (claims.eventId !== eventId) {
-      return unauthorized('Token is not valid for this event');
-    }
+    // ── Auth (optional — unauthenticated gets public fields only) ─────────
+    const claims = await authenticateRequest(event);
 
     // ── Load event ─────────────────────────────────────────────────────────
     const ev = await getItem(`EVENT#${eventId}`, 'METADATA');
@@ -84,10 +83,31 @@ export async function handler(event) {
       return notFound('EVENT_NOT_FOUND', 'Event not found');
     }
 
+    // ── Unauthenticated: return public lobby fields only ──────────────────
+    if (!claims) {
+      const publicResult = {};
+      for (const key of PUBLIC_FIELDS) {
+        if (ev[key] !== undefined) publicResult[key] = ev[key];
+      }
+      if (ev.coverUrl) {
+        publicResult.coverUrl = buildCdnUrl(ev.coverUrl) ?? ev.coverUrl;
+      }
+      logger.info('getEvent (public)', { eventId });
+      return ok(publicResult);
+    }
+
+    // ── Authenticated: validate token belongs to this event ───────────────
+    if (claims.eventIds && !claims.eventIds.includes(eventId)) {
+      return unauthorized('Token is not valid for this event');
+    }
+    if (!claims.eventIds && claims.eventId !== eventId) {
+      return unauthorized('Token is not valid for this event');
+    }
+
     // ── Track scan / unique visitor (fire-and-forget) ─────────────────────
     // Only count guest views as QR scans; host admin views are not scans.
     if (claims.role === 'guest') {
-      incrementScanCountAsync(eventId, ev).catch((err) => {
+      incrementScanCountAsync(eventId).catch((err) => {
         logger.warn('Failed to update scan count', { eventId, error: err.message });
       });
     }
@@ -105,8 +125,7 @@ export async function handler(event) {
  * Atomically increment totalScans on the event record.
  * Runs async so it never blocks the response.
  */
-async function incrementScanCountAsync(eventId, ev) {
-  const { updateItem } = await import('../../shared/dynamodb.mjs');
+async function incrementScanCountAsync(eventId) {
   const now = new Date().toISOString();
   await updateItem(
     `EVENT#${eventId}`,

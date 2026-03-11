@@ -13,18 +13,21 @@ const HOW_IT_WORKS = [
     title: 'Crea tu evento',
     description:
       'Registra el nombre, fecha y contraseña. Obtienes un código QR único al instante.',
+    image: '/images/qr-table.png',
   },
   {
     icon: <Upload className="w-8 h-8 text-accent-green" aria-hidden="true" />,
     title: 'Comparte el QR',
     description:
       'Los invitados escanean el código, ingresan la contraseña y suben sus fotos directamente.',
+    image: '/images/guests-uploading.png',
   },
   {
     icon: <Share2 className="w-8 h-8 text-accent-green" aria-hidden="true" />,
     title: 'Revive cada momento',
     description:
       'Todos los recuerdos en un solo lugar. Descarga el álbum completo cuando quieras.',
+    image: '/images/album-download.png',
   },
 ];
 
@@ -102,34 +105,46 @@ const PRICING: PricingTier[] = [
 
 function HeroSection() {
   return (
-    <section className="relative overflow-hidden bg-gradient-to-br from-accent-green-light via-white to-white py-20 px-4 text-center">
-      <div className="mx-auto max-w-2xl">
-        {/* Logo mark */}
-        <div className="mb-6 flex justify-center">
-          <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-green shadow-card">
-            <Camera className="w-8 h-8 text-white" aria-hidden="true" />
-          </span>
+    <section className="relative overflow-hidden bg-gradient-to-br from-accent-green-light via-white to-white py-16 px-4 lg:py-24">
+      <div className="mx-auto max-w-6xl flex flex-col items-center gap-10 lg:flex-row lg:gap-16">
+        {/* Text */}
+        <div className="flex-1 text-center lg:text-left">
+          <div className="mb-6 flex justify-center lg:justify-start">
+            <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-green shadow-card">
+              <Camera className="w-8 h-8 text-white" aria-hidden="true" />
+            </span>
+          </div>
+
+          <h1 className="font-heading text-4xl font-bold text-primary leading-tight md:text-5xl lg:text-6xl">
+            Captura cada <span className="text-accent-green">momento</span>
+          </h1>
+          <p className="mt-4 font-body text-lg text-secondary md:text-xl">
+            Crea un álbum privado para tu evento en segundos. Comparte el QR y deja que tus
+            invitados suban recuerdos desde sus celulares.
+          </p>
+
+          <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+            <Link to="/create">
+              <Button size="lg" variant="primary">
+                Crea tu evento
+              </Button>
+            </Link>
+            <a href="#como-funciona">
+              <Button size="lg" variant="secondary">
+                Cómo funciona
+              </Button>
+            </a>
+          </div>
         </div>
 
-        <h1 className="font-heading text-4xl font-bold text-primary leading-tight md:text-5xl lg:text-6xl">
-          Captura cada <span className="text-accent-green">momento</span>
-        </h1>
-        <p className="mt-4 font-body text-lg text-secondary md:text-xl">
-          Crea un álbum privado para tu evento en segundos. Comparte el QR y deja que tus
-          invitados suban recuerdos desde sus celulares.
-        </p>
-
-        <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-          <Link to="/create">
-            <Button size="lg" variant="primary">
-              Crea tu evento
-            </Button>
-          </Link>
-          <a href="#como-funciona">
-            <Button size="lg" variant="secondary">
-              Cómo funciona
-            </Button>
-          </a>
+        {/* Hero image */}
+        <div className="flex-1 flex justify-center lg:justify-end">
+          <img
+            src="/images/hero-mockup.png"
+            alt="Loving Memory — galería de fotos en un celular"
+            className="w-full max-w-sm rounded-2xl shadow-modal"
+            loading="eager"
+          />
         </div>
       </div>
 
@@ -156,11 +171,17 @@ function HowItWorksSection() {
         <p className="font-body text-secondary text-center mb-10">
           En tres pasos tienes tu álbum listo para compartir.
         </p>
-        <div className="grid gap-6 sm:grid-cols-3">
+        <div className="grid gap-8 sm:grid-cols-3">
           {HOW_IT_WORKS.map((step, idx) => (
-            <Card key={step.title} padding="lg" className="text-center">
-              <div className="flex justify-center mb-4">
-                <span className="inline-flex items-center justify-center w-14 h-14 rounded-card bg-accent-green-light">
+            <Card key={step.title} padding="lg" className="text-center overflow-hidden">
+              <img
+                src={step.image}
+                alt={step.title}
+                className="w-full h-40 object-cover rounded-lg mb-4"
+                loading="lazy"
+              />
+              <div className="flex justify-center mb-3">
+                <span className="inline-flex items-center justify-center w-12 h-12 rounded-card bg-accent-green-light">
                   {step.icon}
                 </span>
               </div>
@@ -269,7 +290,7 @@ function Footer() {
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-card bg-accent-green">
             <Camera className="w-4 h-4 text-white" aria-hidden="true" />
           </span>
-          <span className="font-heading text-lg font-bold text-primary">EventAlbum</span>
+          <span className="font-heading text-lg font-bold text-primary">Loving Memory</span>
         </div>
 
         {/* Links */}
@@ -287,7 +308,7 @@ function Footer() {
             Términos
           </a>
           <a
-            href="mailto:hola@codersatelier.com"
+            href="mailto:hola@snapnshare.app"
             className="font-body text-sm text-secondary hover:text-primary transition-colors"
           >
             Contacto
@@ -295,7 +316,7 @@ function Footer() {
         </nav>
 
         <p className="font-body text-xs text-tertiary">
-          &copy; {new Date().getFullYear()} EventAlbum. Todos los derechos reservados.
+          &copy; {new Date().getFullYear()} Loving Memory. Todos los derechos reservados.
         </p>
       </div>
     </footer>

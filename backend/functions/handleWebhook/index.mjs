@@ -1,8 +1,9 @@
-import { getItem, putItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, serverError } from '../../shared/response.mjs';
-import { getTierConfig, getSecret } from '../../shared/config.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, serverError } from '/opt/nodejs/response.mjs';
+import { getTierConfig, getSecret } from '/opt/nodejs/config.mjs';
+import { sendReceiptEmail, sendEventCreatedEmail } from '/opt/nodejs/email.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const RECURRENTE_API_URL = 'https://app.recurrente.com/api/checkouts/';
 
@@ -84,49 +85,65 @@ export async function handler(event) {
       }
 
       // ── Upgrade event ─────────────────────────────────────────────
+      const isUpgrade = metadata.is_upgrade === 'true';
+      const previousTier = metadata.previous_tier;
       const now = new Date().toISOString();
       const retentionDays = tierConfig.storageDays ?? RETENTION_DAYS[tier] ?? 15;
       const newExpiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+
+      const updateExpr = 'SET #tier = :tier, #uploadLimit = :uploadLimit, #mediaTypes = :mediaTypes, #paymentStatus = :paymentStatus, #expiresAt = :expiresAt, #expiresAtTTL = :expiresAtTTL, #allowDownloads = :allowDownloads, #allowVideo = :allowVideo, #autoApprove = :autoApprove, #maxFileSizeBytes = :maxFileSizeBytes, #paidAt = :paidAt, #updatedAt = :updatedAt';
+      const updateValues = {
+        ':tier': tier,
+        ':uploadLimit': tierConfig.uploadLimit,
+        ':mediaTypes': tierConfig.mediaTypes,
+        ':paymentStatus': 'paid',
+        ':expiresAt': newExpiresAt.toISOString(),
+        ':expiresAtTTL': Math.floor(newExpiresAt.getTime() / 1000),
+        ':allowDownloads': tier !== 'basic',
+        ':allowVideo': tier !== 'basic',
+        ':autoApprove': tier === 'premium',
+        ':maxFileSizeBytes': tierConfig.maxFileSizeBytes,
+        ':paidAt': now,
+        ':updatedAt': now,
+      };
+      const updateNames = {
+        '#tier': 'tier',
+        '#uploadLimit': 'uploadLimit',
+        '#mediaTypes': 'mediaTypes',
+        '#paymentStatus': 'paymentStatus',
+        '#expiresAt': 'expiresAt',
+        '#expiresAtTTL': 'expiresAtTTL',
+        '#allowDownloads': 'allowDownloads',
+        '#allowVideo': 'allowVideo',
+        '#autoApprove': 'autoApprove',
+        '#maxFileSizeBytes': 'maxFileSizeBytes',
+        '#paidAt': 'paidAt',
+        '#updatedAt': 'updatedAt',
+      };
+
+      // For upgrades: condition on current tier matching previous_tier (idempotency)
+      // For initial payment: condition on paymentStatus not being 'paid' (idempotency)
+      let conditionExpr;
+      if (isUpgrade && previousTier) {
+        updateValues[':previousTier'] = previousTier;
+        conditionExpr = 'tier = :previousTier';
+      } else {
+        updateValues[':notPaid'] = 'paid';
+        conditionExpr = 'paymentStatus <> :notPaid';
+      }
 
       try {
         await updateItem(
           `EVENT#${eventId}`,
           'METADATA',
-          'SET #tier = :tier, #uploadLimit = :uploadLimit, #mediaTypes = :mediaTypes, #paymentStatus = :paymentStatus, #expiresAt = :expiresAt, #expiresAtTTL = :expiresAtTTL, #allowDownloads = :allowDownloads, #allowVideo = :allowVideo, #autoApprove = :autoApprove, #maxFileSizeBytes = :maxFileSizeBytes, #paidAt = :paidAt, #updatedAt = :updatedAt',
-          {
-            ':tier': tier,
-            ':uploadLimit': tierConfig.uploadLimit,
-            ':mediaTypes': tierConfig.mediaTypes,
-            ':paymentStatus': 'paid',
-            ':expiresAt': newExpiresAt.toISOString(),
-            ':expiresAtTTL': Math.floor(newExpiresAt.getTime() / 1000),
-            ':allowDownloads': true,
-            ':allowVideo': true,
-            ':autoApprove': tier === 'premium',
-            ':maxFileSizeBytes': tierConfig.maxFileSizeBytes,
-            ':paidAt': now,
-            ':updatedAt': now,
-            ':notPaid': 'paid',
-          },
-          {
-            '#tier': 'tier',
-            '#uploadLimit': 'uploadLimit',
-            '#mediaTypes': 'mediaTypes',
-            '#paymentStatus': 'paymentStatus',
-            '#expiresAt': 'expiresAt',
-            '#expiresAtTTL': 'expiresAtTTL',
-            '#allowDownloads': 'allowDownloads',
-            '#allowVideo': 'allowVideo',
-            '#autoApprove': 'autoApprove',
-            '#maxFileSizeBytes': 'maxFileSizeBytes',
-            '#paidAt': 'paidAt',
-            '#updatedAt': 'updatedAt',
-          },
-          'paymentStatus <> :notPaid',
+          updateExpr,
+          updateValues,
+          updateNames,
+          conditionExpr,
         );
       } catch (updateErr) {
         if (updateErr.name === 'ConditionalCheckFailedException') {
-          logger.warn('Duplicate payment webhook — event already paid', {
+          logger.warn(isUpgrade ? 'Duplicate upgrade webhook — tier already upgraded' : 'Duplicate payment webhook — event already paid', {
             eventId,
             checkoutId,
           });
@@ -156,6 +173,43 @@ export async function handler(event) {
         checkoutId,
         paymentIntentId,
       });
+
+      // ── Send emails (must await — Lambda freezes after response) ──
+      const hostEmail = metadata.host_email;
+      const eventTitle = metadata.event_title || eventId;
+      if (hostEmail) {
+        // Send receipt email
+        try {
+          await sendReceiptEmail(hostEmail, {
+            eventId,
+            title: eventTitle,
+            tier,
+            amount: metadata.amount ? parseInt(metadata.amount, 10) : 0,
+            currency: metadata.currency || 'GTQ',
+            paymentDate: now,
+            paymentMethod: metadata.payment_method || null,
+          });
+        } catch (emailErr) {
+          logger.warn('Failed to send receipt email', {
+            eventId,
+            error: emailErr.message,
+          });
+        }
+
+        // Send event-created email now that payment is confirmed (skip for upgrades)
+        if (!isUpgrade) {
+          const frontendUrl = process.env.FRONTEND_URL || 'https://snapnshare.app';
+          const qrUrl = `${frontendUrl}/e/${eventId}`;
+          try {
+            await sendEventCreatedEmail(hostEmail, { eventId, title: eventTitle, qrUrl, tier });
+          } catch (emailErr) {
+            logger.warn('Failed to send event created email', {
+              eventId,
+              error: emailErr.message,
+            });
+          }
+        }
+      }
 
       return ok({ received: true, processed: true });
     }

@@ -1,8 +1,8 @@
-import { getItem, queryItems } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, unauthorized, notFound, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { getTierConfig } from '../../shared/config.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, unauthorized, notFound, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { getTierConfig } from '/opt/nodejs/config.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Fallback retention days if not in SSM
 const RETENTION_DAYS = {

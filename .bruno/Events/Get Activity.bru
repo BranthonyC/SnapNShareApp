@@ -1,0 +1,15 @@
+meta {
+  name: Get Activity
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/events/{{eventId}}/activity
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}

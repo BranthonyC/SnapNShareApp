@@ -17,7 +17,7 @@ export default function Spinner({ size = 'md', className = '' }: SpinnerProps) {
   return (
     <Loader
       className={[
-        'animate-spin text-accent-green shrink-0',
+        'animate-spin text-accent shrink-0',
         sizeClasses[size],
         className,
       ]

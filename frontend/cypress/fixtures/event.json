@@ -1,0 +1,19 @@
+{
+  "eventId": "evt_test123",
+  "title": "Boda Ana & Carlos",
+  "description": "Celebración de nuestra boda",
+  "startDate": "2026-03-15T18:00:00Z",
+  "endDate": "2026-03-16T02:00:00Z",
+  "tier": "paid",
+  "uploadCount": 12,
+  "uploadLimit": 500,
+  "mediaTypes": ["image/jpeg", "image/png", "image/webp"],
+  "status": "active",
+  "colorTheme": "green",
+  "showDateTime": true,
+  "allowDownloads": true,
+  "allowVideo": false,
+  "coverUrl": null,
+  "footerText": "",
+  "welcomeMessage": "¡Bienvenidos! Sube tus fotos favoritas"
+}

@@ -8,17 +8,24 @@ Globals:
     Architectures: [arm64]
     MemorySize: 128
     Timeout: 10
+    Layers:
+      - !Ref SharedUtilsLayer
     Environment:
       Variables:
-        TABLE_NAME: !Ref EventAlbumTable
-        MEDIA_BUCKET: !Ref MediaBucket
-        CLOUDFRONT_DOMAIN: !GetAtt MediaDistribution.DomainName
+        TABLE_NAME: !Sub EventAlbum-${Environment}
+        MEDIA_BUCKET: !Sub eventalbum-media-${Environment}
+        CLOUDFRONT_DOMAIN: !If
+          - HasCertificate
+          - !Sub cdn.${DomainName}
+          - !GetAtt MediaDistribution.DomainName
         SES_FROM_EMAIL: !Sub noreply@${DomainName}
         STAGE: !Ref Environment
         FRONTEND_URL: !If
           - IsProd
-          - !Sub https://eventalbum.${DomainName}
-          - !Sub https://eventalbum.${DomainName}
+          - !Sub https://${DomainName}
+          - !Ref FrontendUrl
+        SECRETS_PREFIX: /eventalbum/secrets
+        RECURRENTE_SSM_PREFIX: !Sub /eventalbum/${Environment}/secrets
 
 Parameters:
   Environment:
@@ -35,15 +42,20 @@ Parameters:
     Description: CloudFront key pair ID for signed URLs
   DomainName:
     Type: String
-    Default: codersatelier.com
+    Default: snapnshare.app
     Description: Base domain name
   HostedZoneId:
     Type: String
-    Default: Z08603501B1REIW4K7888
-    Description: Route53 hosted zone ID for codersatelier.com
+    Default: Z08237523CHVVUQR4Z667
+    Description: Route53 hosted zone ID for snapnshare.app
+  FrontendUrl:
+    Type: String
+    Default: ''
+    Description: Frontend URL for staging (set after first deploy with CloudFront domain)
 
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
+  IsNotProd: !Not [!Equals [!Ref Environment, prod]]
   HasCertificate: !Not [!Equals [!Ref CertificateArn, '']]
 
 Resources:
@@ -66,8 +78,9 @@ Resources:
       StageName: !Ref Environment
       CorsConfiguration:
         AllowOrigins:
-          - !Sub https://eventalbum.${DomainName}
+          - !Sub https://${DomainName}
           - http://localhost:5173
+          - "*"
         AllowMethods:
           - GET
           - POST
@@ -80,10 +93,12 @@ Resources:
           - X-Confirm-Delete
           - X-Request-Id
         MaxAge: 600
-      ThrottlingBurstLimit: 100
-      ThrottlingRateLimit: 50
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 100
+        ThrottlingRateLimit: 50
       AccessLogSettings:
         DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","latency":"$context.responseLatency"}'
 
   # =============================
   # PUBLIC ENDPOINTS (No Auth)
@@ -104,7 +119,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/config/*
         - SSMParameterReadPolicy:
@@ -114,7 +129,7 @@ Resources:
         - Statement:
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   AuthEventFunction:
     Type: AWS::Serverless::Function
@@ -131,7 +146,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -150,14 +165,14 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - Statement:
             - Effect: Allow
               Action: dynamodb:Query
               Resource: !Sub ${EventAlbumTable.Arn}/index/GSI1
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   HostVerifyFunction:
     Type: AWS::Serverless::Function
@@ -174,7 +189,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - Statement:
             - Effect: Allow
               Action: dynamodb:Query
@@ -198,6 +213,8 @@ Resources:
       Policies:
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
 
   ValidatePromoFunction:
     Type: AWS::Serverless::Function
@@ -214,7 +231,13 @@ Resources:
             Method: POST
       Policies:
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/config/discounts
+            ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/secrets/jwt-secret
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/secrets/discounts
 
   WebhookFunction:
     Type: AWS::Serverless::Function
@@ -232,13 +255,17 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/secrets/recurrente-*
+            ParameterName: !Sub eventalbum/${Environment}/secrets/recurrente-*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
         - Statement:
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   # =============================
   # AUTHENTICATED ENDPOINTS
@@ -259,7 +286,11 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt EventAlbumTable.Arn
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
         - SSMParameterReadPolicy:
@@ -280,7 +311,7 @@ Resources:
             Method: PATCH
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -299,9 +330,9 @@ Resources:
             Method: DELETE
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -320,7 +351,7 @@ Resources:
             Method: PATCH
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/config/tiers/*
         - SSMParameterReadPolicy:
@@ -345,11 +376,17 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObjectTagging
+              Resource: !Sub arn:aws:s3:::eventalbum-media-${Environment}/*
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/config/tiers/*
+            ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -374,9 +411,9 @@ Resources:
                     Value: events/
       Policies:
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/config/tiers/*
         - Statement:
@@ -385,7 +422,7 @@ Resources:
               Resource: "*"
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   ListMediaFunction:
     Type: AWS::Serverless::Function
@@ -402,7 +439,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/cf-*
         - SSMParameterReadPolicy:
@@ -423,9 +460,9 @@ Resources:
             Method: DELETE
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -445,9 +482,9 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -467,9 +504,9 @@ Resources:
             Method: DELETE
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -488,7 +525,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -507,13 +544,13 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
         - Statement:
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   ModerateMediaFunction:
     Type: AWS::Serverless::Function
@@ -530,9 +567,9 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -555,7 +592,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -574,7 +611,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -593,7 +630,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -616,7 +653,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
         - Statement:
@@ -628,7 +665,7 @@ Resources:
                   sns:Protocol: sms
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   VerifyOtpFunction:
     Type: AWS::Serverless::Function
@@ -645,7 +682,7 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -668,7 +705,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -687,7 +724,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -706,7 +743,7 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -725,9 +762,13 @@ Resources:
             Method: GET
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
 
   # =============================
   # PAYMENTS
@@ -748,13 +789,13 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/secrets/recurrente-*
+            ParameterName: !Sub eventalbum/${Environment}/secrets/recurrente-*
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/config/pricing
+            ParameterName: eventalbum/config/*
         - SSMParameterReadPolicy:
-            ParameterName: eventalbum/config/discounts
+            ParameterName: eventalbum/features/*
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
@@ -779,9 +820,9 @@ Resources:
             Method: POST
       Policies:
         - DynamoDBReadPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/cf-*
         - SSMParameterReadPolicy:
@@ -802,18 +843,19 @@ Resources:
         Schedule:
           Type: ScheduleV2
           Properties:
+            Name: !Sub EventAlbum-${Environment}-notifyUploads-schedule
             ScheduleExpression: rate(30 minutes)
             State: ENABLED
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - Statement:
             - Effect: Allow
               Action: dynamodb:Scan
-              Resource: !GetAtt EventAlbumTable.Arn
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/EventAlbum-${Environment}
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   EventSummaryFunction:
     Type: AWS::Serverless::Function
@@ -826,18 +868,19 @@ Resources:
         Schedule:
           Type: ScheduleV2
           Properties:
+            Name: !Sub EventAlbum-${Environment}-eventSummary-schedule
             ScheduleExpression: rate(1 day)
             State: ENABLED
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - Statement:
             - Effect: Allow
               Action: dynamodb:Scan
-              Resource: !GetAtt EventAlbumTable.Arn
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/EventAlbum-${Environment}
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
-              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
 
   CleanupExpiredFunction:
     Type: AWS::Serverless::Function
@@ -850,13 +893,14 @@ Resources:
         Schedule:
           Type: ScheduleV2
           Properties:
+            Name: !Sub EventAlbum-${Environment}-cleanupExpired-schedule
             ScheduleExpression: rate(1 day)
             State: ENABLED
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: !Ref EventAlbumTable
+            TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
-            BucketName: !Ref MediaBucket
+            BucketName: !Sub eventalbum-media-${Environment}
 
   # =============================
   # DATABASE
@@ -865,6 +909,7 @@ Resources:
   EventAlbumTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub EventAlbum-${Environment}
       BillingMode: PAY_PER_REQUEST
@@ -916,6 +961,7 @@ Resources:
   MediaBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !Sub eventalbum-media-${Environment}
       OwnershipControls:
@@ -932,12 +978,14 @@ Resources:
               SSEAlgorithm: AES256
       CorsConfiguration:
         CorsRules:
-          - AllowedOrigins:
-              - !Sub https://eventalbum.${DomainName}
-              - http://localhost:5173
+          - AllowedOrigins: !If
+              - IsProd
+              - - !Sub https://${DomainName}
+                - http://localhost:5173
+              - - "*"
             AllowedMethods: [PUT]
-            AllowedHeaders: [Content-Type]
-            ExposeHeaders: [ETag]
+            AllowedHeaders: [Content-Type, Content-Length]
+            ExposedHeaders: [ETag]
             MaxAge: 3600
       LifecycleConfiguration:
         Rules:
@@ -975,7 +1023,7 @@ Resources:
         Comment: !Sub EventAlbum Media CDN - ${Environment}
         Aliases: !If
           - HasCertificate
-          - [!Sub "cdn.eventalbum.${DomainName}"]
+          - [!Sub "cdn.${DomainName}"]
           - !Ref AWS::NoValue
         ViewerCertificate: !If
           - HasCertificate
@@ -990,7 +1038,7 @@ Resources:
           Compress: true
         Origins:
           - Id: MediaS3Origin
-            DomainName: !GetAtt MediaBucket.RegionalDomainName
+            DomainName: !Sub eventalbum-media-${Environment}.s3.${AWS::Region}.amazonaws.com
             OriginAccessControlId: !Ref MediaOAC
             S3OriginConfig:
               OriginAccessIdentity: ""
@@ -1009,7 +1057,7 @@ Resources:
   MediaBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref MediaBucket
+      Bucket: !Sub eventalbum-media-${Environment}
       PolicyDocument:
         Statement:
           - Sid: AllowCloudFrontServicePrincipal
@@ -1035,7 +1083,7 @@ Resources:
         DefaultRootObject: index.html
         Aliases: !If
           - HasCertificate
-          - [!Sub "eventalbum.${DomainName}"]
+          - [!Sub "${DomainName}"]
           - !Ref AWS::NoValue
         ViewerCertificate: !If
           - HasCertificate
@@ -1092,6 +1140,63 @@ Resources:
                 AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
 
   # =============================
+  # API CUSTOM DOMAIN (prod only)
+  # =============================
+
+  ApiDomainName:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasCertificate
+    Properties:
+      DomainName: !Sub api.${DomainName}
+      DomainNameConfigurations:
+        - EndpointType: REGIONAL
+          CertificateArn: !Ref CertificateArn
+
+  ApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasCertificate
+    DependsOn:
+      - ApiDomainName
+      - HttpApiStage
+    Properties:
+      DomainName: !Sub api.${DomainName}
+      ApiId: !Ref HttpApi
+      Stage: !Ref Environment
+
+  ApiDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCertificate
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub api.${DomainName}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt ApiDomainName.RegionalDomainName
+        HostedZoneId: !GetAtt ApiDomainName.RegionalHostedZoneId
+
+  FrontendDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCertificate
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt FrontendDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  MediaCdnDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasCertificate
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub cdn.${DomainName}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt MediaDistribution.DomainName
+        HostedZoneId: Z2FDTNDATAQYW2
+
+  # =============================
   # LOGGING
   # =============================
 
@@ -1103,9 +1208,12 @@ Resources:
 
 Outputs:
   ApiUrl:
-    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+    Value: !If
+      - HasCertificate
+      - !Sub https://api.${DomainName}
+      - !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
   MediaBucketName:
-    Value: !Ref MediaBucket
+    Value: !Sub eventalbum-media-${Environment}
   FrontendBucketName:
     Value: !Ref FrontendBucket
   MediaDistributionDomain:
@@ -1117,9 +1225,9 @@ Outputs:
   FrontendDistributionId:
     Value: !Ref FrontendDistribution
   TableName:
-    Value: !Ref EventAlbumTable
+    Value: !Sub EventAlbum-${Environment}
   FrontendUrl:
     Value: !If
       - HasCertificate
-      - !Sub https://eventalbum.${DomainName}
+      - !Sub https://${DomainName}
       - !Sub https://${FrontendDistribution.DomainName}

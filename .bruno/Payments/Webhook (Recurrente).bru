@@ -1,0 +1,27 @@
+meta {
+  name: Webhook (Recurrente)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/webhooks/recurrente
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "type": "payment_intent.succeeded",
+    "data": {
+      "id": "pi_test123",
+      "metadata": {
+        "event_id": "{{eventId}}",
+        "tier": "paid"
+      },
+      "amount": 1500,
+      "currency": "USD",
+      "status": "succeeded"
+    }
+  }
+}

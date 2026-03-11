@@ -1,0 +1,23 @@
+meta {
+  name: Validate Promo
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/promo
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
+
+body:json {
+  {
+    "code": "TECHGT20",
+    "tier": "paid",
+    "currency": "USD"
+  }
+}

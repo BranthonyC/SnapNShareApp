@@ -1,7 +1,10 @@
+import { useAuthStore } from '@/stores/authStore';
+
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const token = sessionStorage.getItem('token');
+  // Read token from Zustand store (persisted in localStorage per-event)
+  const { token, logout } = useAuthStore.getState();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -17,8 +20,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const err = new Error(body?.error?.message || `Request failed: ${res.status}`);
     (err as ApiError).code = body?.error?.code;
     (err as ApiError).status = res.status;
+
+    // Global 401 handler: clear stale auth
+    if (res.status === 401) {
+      logout();
+    }
+
     throw err;
   }
+
+  // Handle 204 No Content
+  if (res.status === 204) return undefined as T;
 
   return res.json();
 }
@@ -82,7 +94,13 @@ export const addComment = (eventId: string, mediaId: string, text: string) =>
   request(`/events/${eventId}/media/${mediaId}/comments`, { method: 'POST', body: JSON.stringify({ text }) });
 
 export const listComments = (eventId: string, mediaId: string, cursor?: string) =>
-  request(`/events/${eventId}/media/${mediaId}/comments?${cursor ? `cursor=${cursor}` : ''}`);
+  request<CommentsResponse>(`/events/${eventId}/media/${mediaId}/comments?${cursor ? `cursor=${cursor}` : ''}`);
+
+export const likeComment = (eventId: string, mediaId: string, commentId: string) =>
+  request<{ liked: boolean; commentId: string }>(`/events/${eventId}/media/${mediaId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'like', commentId }),
+  });
 
 // Media management
 export const deleteMedia = (eventId: string, mediaId: string) =>
@@ -103,15 +121,26 @@ export const reportMedia = (eventId: string, mediaId: string, reason: string, de
 export const moderateMedia = (eventId: string, mediaId: string, action: 'approve' | 'reject') =>
   request(`/events/${eventId}/media/${mediaId}/moderate`, { method: 'POST', body: JSON.stringify({ action }) });
 
+// Checkout & payment
+export const createCheckout = (eventId: string, data: CreateCheckoutRequest) =>
+  request<CreateCheckoutResponse>(`/events/${eventId}/checkout`, { method: 'POST', body: JSON.stringify(data) });
+
+export const validatePromo = (eventId: string, code: string, tier: string) =>
+  request<ValidatePromoResponse>(`/events/${eventId}/promo`, { method: 'POST', body: JSON.stringify({ code, tier }) });
+
+// Download
+export const downloadZip = (eventId: string) =>
+  request<{ downloadUrl: string }>(`/events/${eventId}/download-zip`, { method: 'POST' });
+
 // Activity & analytics
 export const getActivity = (eventId: string, cursor?: string) =>
-  request(`/events/${eventId}/activity?${cursor ? `cursor=${cursor}` : ''}`);
+  request(`/events/${eventId}/activity${cursor ? `?cursor=${cursor}` : ''}`);
 
 export const getQrStats = (eventId: string) =>
-  request(`/events/${eventId}/qr-stats`);
+  request<QrStatsResponse>(`/events/${eventId}/qr-stats`);
 
 export const getStorage = (eventId: string) =>
-  request(`/events/${eventId}/storage`);
+  request<StorageResponse>(`/events/${eventId}/storage`);
 
 // Types
 export interface CreateEventRequest {
@@ -119,9 +148,8 @@ export interface CreateEventRequest {
   description?: string;
   hostEmail: string;
   hostName: string;
-  guestPassword: string;
   startDate: string;
-  endDate: string;
+  timezone?: string;
   tier?: string;
 }
 
@@ -132,11 +160,12 @@ export interface CreateEventResponse {
   tier: string;
   uploadLimit: number;
   expiresAt: string;
+  token: string;
 }
 
 export interface AuthEventRequest {
-  password: string;
   nickname?: string;
+  password?: string;
 }
 
 export interface AuthEventResponse {
@@ -147,6 +176,12 @@ export interface AuthEventResponse {
   event: EventData;
 }
 
+export interface ScheduleItem {
+  time: string;
+  label: string;
+  icon?: 'clock' | 'location';
+}
+
 export interface EventData {
   eventId: string;
   title: string;
@@ -154,6 +189,8 @@ export interface EventData {
   coverUrl?: string;
   footerText?: string;
   welcomeMessage?: string;
+  location?: string;
+  schedule?: ScheduleItem[];
   startDate: string;
   endDate: string;
   tier: string;
@@ -165,6 +202,17 @@ export interface EventData {
   showDateTime: boolean;
   allowDownloads: boolean;
   allowVideo: boolean;
+  galleryPrivacy: boolean;
+  emailNotifications: boolean;
+  autoApprove: boolean;
+  hostEmail?: string;
+  hostName?: string;
+  guestPassword?: string;
+  paymentStatus?: string;
+  expiresAt?: string;
+  maxFileSizeBytes?: number;
+  qrUrl?: string;
+  adminUrl?: string;
 }
 
 export interface EventSettings {
@@ -175,6 +223,7 @@ export interface EventSettings {
   autoApprove: boolean;
   colorTheme: string;
   showDateTime: boolean;
+  smsOtp: boolean;
 }
 
 export interface UploadUrlRequest {
@@ -192,8 +241,9 @@ export interface UploadUrlResponse {
 
 export interface MediaItem {
   mediaId: string;
-  thumbnailUrl: string;
-  fullUrl: string;
+  url: string;
+  thumbnailUrl: string | null;
+  mediumUrl: string | null;
   fileType: string;
   uploadedBy: string;
   uploadedAt: string;
@@ -241,4 +291,53 @@ export interface EventStats {
   reactions: { total: number; byEmoji: Record<string, number> };
   storage: { totalBytes: number; byType: Record<string, number> };
   moderation: { pending: number; approved: number; rejected: number; reported: number };
+}
+
+export interface CreateCheckoutRequest {
+  tier: string;
+  currency: 'USD' | 'GTQ';
+  discountCode?: string;
+  isUpgrade?: boolean;
+}
+
+export interface CreateCheckoutResponse {
+  checkoutUrl: string;
+  checkoutId: string;
+  amount: number;
+  currency: string;
+  discount?: number;
+}
+
+export interface ValidatePromoResponse {
+  valid: boolean;
+  discount?: { type: 'percent' | 'fixed'; value: number };
+  message?: string;
+}
+
+export interface QrStatsResponse {
+  totalScans: number;
+  uniqueVisitors: number;
+  lastScannedAt: string | null;
+}
+
+export interface StorageResponse {
+  totalBytes: number;
+  byType: Record<string, number>;
+  limit?: number;
+}
+
+export interface CommentItem {
+  commentId: string;
+  text: string;
+  authorName: string;
+  sessionId: string;
+  eventId: string;
+  mediaId: string;
+  createdAt: string;
+  likeCount: number;
+}
+
+export interface CommentsResponse {
+  items: CommentItem[];
+  nextCursor: string | null;
 }

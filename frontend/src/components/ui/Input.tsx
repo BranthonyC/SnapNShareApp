@@ -18,7 +18,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
       'block w-full border rounded-card px-3 py-3 font-body text-base text-primary',
       'placeholder:text-tertiary bg-white',
       'transition-colors duration-150 ease-in-out',
-      'focus:outline-none focus:ring-2 focus:ring-accent-green-light focus:border-accent-green',
+      'focus:outline-none focus:ring-2 focus:ring-accent-light focus:border-accent',
       'disabled:opacity-50 disabled:cursor-not-allowed',
       error
         ? 'border-accent-coral focus:ring-red-100 focus:border-accent-coral'

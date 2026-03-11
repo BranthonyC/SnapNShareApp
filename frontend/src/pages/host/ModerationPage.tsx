@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Eye, EyeOff, RefreshCw, CheckCircle } from 'lucide-react';
-import PageLayout from '@/components/layout/PageLayout';
+import AdminLayout from '@/components/layout/AdminLayout';
+import PaymentGate from '@/components/admin/PaymentGate';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
 import Spinner from '@/components/ui/Spinner';
+import TabBar from '@/components/ui/TabBar';
+import { useEvent } from '@/hooks/useEvent';
 import { useAuthStore } from '@/stores/authStore';
 import { listMedia, moderateMedia, type MediaItem } from '@/services/api';
 
@@ -36,7 +39,7 @@ function ModerationTile({ item, onApprove, onReject, isActioning }: ModerationTi
       {/* Thumbnail */}
       <div className="relative w-full aspect-square rounded-card overflow-hidden bg-muted mb-2">
         <img
-          src={item.thumbnailUrl}
+          src={item.thumbnailUrl ?? item.url}
           alt=""
           loading="lazy"
           decoding="async"
@@ -65,7 +68,7 @@ function ModerationTile({ item, onApprove, onReject, isActioning }: ModerationTi
             'absolute top-2 right-2 flex items-center justify-center w-8 h-8 rounded-pill',
             'bg-black/50 text-white hover:bg-black/70',
             'transition-colors duration-150',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent',
           ].join(' ')}
         >
           {revealed ? (
@@ -114,8 +117,8 @@ function ModerationTile({ item, onApprove, onReject, isActioning }: ModerationTi
 function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-      <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-green-light mb-4">
-        <CheckCircle className="w-8 h-8 text-accent-green" aria-hidden="true" />
+      <span className="inline-flex items-center justify-center w-16 h-16 rounded-card bg-accent-light mb-4">
+        <CheckCircle className="w-8 h-8 text-accent" aria-hidden="true" />
       </span>
       <h2 className="font-heading text-xl font-semibold text-primary mb-2">
         No hay contenido pendiente de revision
@@ -142,11 +145,14 @@ export default function ModerationPage() {
     }
   }, [isAuthenticated, role, navigate]);
 
+  const { data: event } = useEvent(eventId);
+
   const [items, setItems] = useState<MediaItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [actioningIds, setActioningIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('all');
 
   // Load flagged / reported media
   const loadItems = useCallback(
@@ -210,17 +216,28 @@ export default function ModerationPage() {
     }
   }
 
+  // Filter by tab
+  const filteredItems = activeTab === 'all'
+    ? items
+    : items.filter((item) => item.status === activeTab);
+
+  const reportedCount = items.filter((i) => i.status === 'reported').length;
+  const pendingCount = items.filter((i) => i.status === 'pending_review').length;
+
   return (
-    <PageLayout
+    <AdminLayout
       title="Moderacion"
-      showBack
       onBack={() => navigate(`/e/${eventId}/admin`)}
+      tier={event?.tier}
     >
-      {/* Header actions */}
-      <div className="flex items-center justify-between mb-4 -mt-1">
-        <p className="font-body text-sm text-secondary">
-          {isLoading ? 'Cargando...' : `${items.length} elemento${items.length !== 1 ? 's' : ''} pendiente${items.length !== 1 ? 's' : ''}`}
-        </p>
+      <PaymentGate eventId={eventId!} paymentStatus={event?.paymentStatus} tier={event?.tier ?? 'basic'}>
+      {/* Tabs + header actions */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <TabBar value={activeTab} onChange={setActiveTab}>
+          <TabBar.Tab value="all" label="Todos" count={items.length} />
+          <TabBar.Tab value="pending_review" label="Pendientes" count={pendingCount} />
+          <TabBar.Tab value="reported" label="Reportados" count={reportedCount} />
+        </TabBar>
         <Button
           variant="secondary"
           size="sm"
@@ -247,12 +264,12 @@ export default function ModerationPage() {
       )}
 
       {/* Empty state */}
-      {!isLoading && items.length === 0 && <EmptyState />}
+      {!isLoading && filteredItems.length === 0 && <EmptyState />}
 
-      {/* Grid */}
-      {!isLoading && items.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {items.map((item) => (
+      {/* Grid — responsive: 2 → 3 → 4 cols */}
+      {!isLoading && filteredItems.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          {filteredItems.map((item) => (
             <ModerationTile
               key={item.mediaId}
               item={item}
@@ -263,6 +280,7 @@ export default function ModerationPage() {
           ))}
         </div>
       )}
-    </PageLayout>
+      </PaymentGate>
+    </AdminLayout>
   );
 }

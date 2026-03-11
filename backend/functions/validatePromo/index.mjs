@@ -1,7 +1,7 @@
-import { ok, validationError, serverError } from '../../shared/response.mjs';
-import { getSecret } from '../../shared/config.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { ok, validationError, serverError } from '/opt/nodejs/response.mjs';
+import { getSecret } from '/opt/nodejs/config.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Pricing in cents (must match createCheckout)
 const PRICES = {

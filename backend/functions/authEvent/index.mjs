@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 
-import { getItem, putItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, notFound, forbidden, serverError, error } from '../../shared/response.mjs';
-import { signJwt, generateSessionId } from '../../shared/auth.mjs';
-import { validateAuthEvent, parseBody, sanitizeHtml } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, notFound, forbidden, serverError, error } from '/opt/nodejs/response.mjs';
+import { signJwt, generateSessionId } from '/opt/nodejs/auth.mjs';
+import { validateAuthEvent, parseBody, sanitizeHtml } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Guest session TTL: 48 hours (covers full event + some grace)
 const GUEST_SESSION_TTL_SECONDS = 48 * 60 * 60;
@@ -13,6 +13,7 @@ const GUEST_SESSION_TTL_SECONDS = 48 * 60 * 60;
 const HOST_ONLY_FIELDS = new Set([
   'hostPasswordHash',
   'hostEmail',
+  'guestPassword',
   'checkoutId',
   'lastNotifiedAt',
   'paymentStatus',
@@ -61,9 +62,13 @@ export async function handler(event) {
     if (ev.status === 'locked') {
       return forbidden('EVENT_LOCKED', 'This event is currently locked by the host');
     }
+    // Block guest access to events that haven't been paid for yet
+    if (ev.paymentStatus === 'unpaid' || ev.paymentStatus === 'failed') {
+      return forbidden('EVENT_UNPAID', 'This event is not yet available. The host needs to complete payment first.');
+    }
 
-    // ── Password check (plaintext compare — guest password is never hashed) ─
-    if (password !== ev.guestPassword) {
+    // ── Password check (only for legacy events that have a guestPassword) ──
+    if (ev.guestPassword && password !== ev.guestPassword) {
       logger.warn('Auth failed: wrong password', { eventId });
       return forbidden('WRONG_PASSWORD', 'Incorrect event password');
     }
@@ -86,9 +91,9 @@ export async function handler(event) {
     const sessionExpiresAt = new Date(Date.now() + GUEST_SESSION_TTL_SECONDS * 1000).toISOString();
     const sessionExpiresAtTTL = nowUnix + GUEST_SESSION_TTL_SECONDS;
 
-    // Guests on 'basic' tier are auto-verified (no OTP step needed).
-    // For 'paid' and 'premium', verified=false — the client must complete OTP.
-    const verified = ev.tier === 'basic';
+    // All guests start unverified — OTP is required before any interaction
+    // (uploading, commenting, reacting). Viewing the gallery is always allowed.
+    const verified = false;
 
     const sessionItem = {
       PK: `EVENT#${eventId}`,

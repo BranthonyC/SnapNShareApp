@@ -1,7 +1,7 @@
-import { getItem, updateItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, notFound, unauthorized, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, notFound, unauthorized, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 // Grace period before DynamoDB TTL auto-deletes: 24 hours
 const GRACE_PERIOD_SECONDS = 24 * 60 * 60;

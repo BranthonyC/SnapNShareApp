@@ -1,7 +1,7 @@
-import { getItem, queryItems } from '../../shared/dynamodb.mjs';
-import { ok, validationError, notFound, unauthorized, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, notFound, unauthorized, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;

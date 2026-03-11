@@ -4,7 +4,6 @@ import {
   User,
   Mail,
   Calendar,
-  Lock,
   FileText,
   Check,
   Tag,
@@ -14,8 +13,10 @@ import {
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Card from '@/components/ui/Card';
+import Logo from '@/components/ui/Logo';
 import * as api from '@/services/api';
 import type { ApiError } from '@/services/api';
+import { useAuthStore } from '@/stores/authStore';
 
 // ---------------------------------------------------------------------------
 // CheckoutPage — /checkout
@@ -47,8 +48,8 @@ const TIERS: TierInfo[] = [
     duration: '15 días',
     features: [
       '150 fotos por evento',
-      'Galería privada con contraseña',
-      'Código QR incluido',
+      'Galería con código QR',
+      'Fotos aceptadas por 24 horas',
       'Álbum activo por 15 días',
       'Solo imágenes',
     ],
@@ -62,7 +63,7 @@ const TIERS: TierInfo[] = [
     uploads: 500,
     duration: '6 meses',
     badge: 'Popular',
-    badgeStyle: 'bg-accent-green text-white',
+    badgeStyle: 'bg-accent text-white',
     highlighted: true,
     features: [
       '500 fotos por evento',
@@ -111,7 +112,7 @@ function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
             className={[
               'flex items-center justify-center w-8 h-8 rounded-full font-body text-sm font-semibold transition-colors',
               current >= s.num
-                ? 'bg-accent-green text-white'
+                ? 'bg-accent text-white'
                 : 'bg-muted text-tertiary',
             ].join(' ')}
           >
@@ -133,7 +134,7 @@ function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
             <div
               className={[
                 'w-8 h-0.5 rounded-full',
-                current > s.num ? 'bg-accent-green' : 'bg-border-subtle',
+                current > s.num ? 'bg-accent' : 'bg-border-subtle',
               ].join(' ')}
             />
           )}
@@ -149,6 +150,7 @@ function StepIndicator({ current }: { current: 1 | 2 | 3 }) {
 export default function CheckoutPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { setHostAuth } = useAuthStore();
 
   const preselectedTier = searchParams.get('tier') || '';
 
@@ -164,8 +166,6 @@ export default function CheckoutPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [guestPassword, setGuestPassword] = useState('');
 
   // Step 3 — Plan
   const [selectedTier, setSelectedTier] = useState(
@@ -201,23 +201,7 @@ export default function CheckoutPage() {
       return false;
     }
     if (!startDate) {
-      setError('Por favor selecciona la fecha de inicio.');
-      return false;
-    }
-    if (!endDate) {
-      setError('Por favor selecciona la fecha de fin.');
-      return false;
-    }
-    if (new Date(endDate) <= new Date(startDate)) {
-      setError('La fecha de fin debe ser posterior a la de inicio.');
-      return false;
-    }
-    if (!guestPassword.trim()) {
-      setError('Por favor ingresa una contraseña para los invitados.');
-      return false;
-    }
-    if (guestPassword.trim().length < 4) {
-      setError('La contraseña debe tener al menos 4 caracteres.');
+      setError('Por favor selecciona la fecha del evento.');
       return false;
     }
     return true;
@@ -241,15 +225,26 @@ export default function CheckoutPage() {
   // ---------------------------------------------------------------------------
   // Promo code
   // ---------------------------------------------------------------------------
-  function handleApplyPromo() {
+  const [isValidatingPromo, setIsValidatingPromo] = useState(false);
+
+  async function handleApplyPromo() {
     const code = promoCode.trim().toUpperCase();
     if (!code) {
       setPromoError('Ingresa un código promocional.');
       return;
     }
-    // Client-side placeholder — real validation would call an API endpoint
-    setPromoError('Código no válido.');
-    setPromoApplied(false);
+    setIsValidatingPromo(true);
+    setPromoError('');
+    try {
+      // Promo is validated server-side during checkout creation.
+      // Here we just mark it as applied so the code is sent with the checkout request.
+      setPromoApplied(true);
+    } catch {
+      setPromoError('Código no válido.');
+      setPromoApplied(false);
+    } finally {
+      setIsValidatingPromo(false);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -260,24 +255,41 @@ export default function CheckoutPage() {
     setError('');
 
     try {
+      // Build ISO string with timezone offset from the datetime-local value
+      const localDate = new Date(startDate);
+      const offsetMinutes = localDate.getTimezoneOffset();
+      const sign = offsetMinutes <= 0 ? '+' : '-';
+      const absH = String(Math.floor(Math.abs(offsetMinutes) / 60)).padStart(2, '0');
+      const absM = String(Math.abs(offsetMinutes) % 60).padStart(2, '0');
+      const startDateISO = `${startDate}:00${sign}${absH}:${absM}`;
+
       const res = await api.createEvent({
         title: title.trim(),
         description: description.trim() || undefined,
         hostEmail: hostEmail.trim(),
         hostName: hostName.trim(),
-        guestPassword: guestPassword.trim(),
-        startDate,
-        endDate,
+        startDate: startDateISO,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         tier: selectedTier,
       });
 
-      if (selectedTier === 'basic') {
-        // Free tier — go straight to admin
-        navigate(`/e/${res.eventId}/admin`, { replace: true });
-      } else {
-        // Paid/Premium — the API should return a checkout URL
-        // For now navigate to admin with a note that payment is pending
-        // In production this would redirect to Recurrente checkout
+      // Store the JWT token so the user is authenticated
+      setHostAuth(res.token, res.eventId);
+
+      // All tiers go through Recurrente payment
+      try {
+        const checkout = await api.createCheckout(res.eventId, {
+          tier: selectedTier,
+          currency,
+          discountCode: promoApplied ? promoCode.trim().toUpperCase() : undefined,
+        });
+        // Redirect to Recurrente checkout page
+        window.location.href = checkout.checkoutUrl;
+      } catch (checkoutErr) {
+        // If checkout creation fails, send to admin — PaymentGate will block access until paid
+        const apiErr = checkoutErr as ApiError;
+        console.warn('Checkout creation failed:', apiErr.message);
+        setError('No se pudo iniciar el pago. Tu evento fue creado — puedes intentar el pago desde el panel.');
         navigate(`/e/${res.eventId}/admin`, { replace: true });
       }
     } catch (err) {
@@ -296,11 +308,92 @@ export default function CheckoutPage() {
     ? `$${currentTier.priceUSD}`
     : `Q${currentTier.priceGTQ}`;
 
+  // Promo + summary card (reused in both mobile step 3 and desktop sidebar)
+  const promoSection = (
+    <Card padding="md" className="mb-6 lg:mb-4">
+      <div className="flex gap-2 items-end">
+        <div className="flex-1">
+          <Input
+            label="Código promocional"
+            type="text"
+            id="promo-code"
+            placeholder="Ej. EVENTO2026"
+            icon={<Tag className="w-4 h-4" aria-hidden="true" />}
+            value={promoCode}
+            onChange={(e) => {
+              setPromoCode(e.target.value);
+              setPromoError('');
+              setPromoApplied(false);
+            }}
+            error={promoError || undefined}
+            disabled={isLoading}
+          />
+        </div>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={handleApplyPromo}
+          disabled={isLoading || isValidatingPromo}
+          loading={isValidatingPromo}
+          className="mb-0"
+        >
+          Aplicar
+        </Button>
+      </div>
+      {promoApplied && (
+        <p className="mt-2 font-body text-xs text-accent">
+          Código aplicado correctamente.
+        </p>
+      )}
+    </Card>
+  );
+
+  const summarySection = (
+    <Card padding="lg" className="mb-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <p className="font-heading text-base font-semibold text-primary">
+            Plan {currentTier.name}
+          </p>
+          <p className="font-body text-sm text-secondary">
+            {currentTier.uploads} fotos &middot; {currentTier.duration}
+          </p>
+        </div>
+        <p className="font-heading text-2xl font-bold text-primary">
+          {price}
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={handleBack}
+          icon={<ChevronLeft className="w-4 h-4" />}
+          className="lg:hidden"
+        >
+          Atrás
+        </Button>
+
+        <Button
+          variant="primary"
+          size="lg"
+          fullWidth
+          loading={isLoading}
+          disabled={isLoading}
+          onClick={handleCreateEvent}
+        >
+          {isLoading ? 'Procesando...' : `Crear evento y pagar ${price}`}
+        </Button>
+      </div>
+    </Card>
+  );
+
   return (
     <div className="min-h-screen bg-page">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-card shadow-card border-b border-border-subtle">
-        <div className="mx-auto max-w-3xl px-4 md:px-8 h-14 flex items-center gap-3">
+        <div className="mx-auto max-w-5xl px-4 md:px-8 h-14 flex items-center gap-3">
           <button
             type="button"
             onClick={() => (step === 1 ? navigate('/') : handleBack())}
@@ -309,19 +402,29 @@ export default function CheckoutPage() {
               'flex items-center justify-center w-8 h-8 -ml-1 rounded-pill',
               'text-secondary hover:text-primary hover:bg-muted',
               'transition-colors duration-150 ease-in-out',
-              'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green focus-visible:ring-offset-1',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1',
+              'lg:hidden',
             ].join(' ')}
           >
             <ChevronLeft className="w-5 h-5" aria-hidden="true" />
           </button>
-          <h1 className="font-heading text-lg font-semibold text-primary truncate">
+          <Logo size="md" showText className="hidden lg:flex" />
+          <h1 className="font-heading text-lg font-semibold text-primary truncate lg:hidden">
             Crear evento
           </h1>
+          {/* Desktop step indicator in header */}
+          <div className="hidden lg:flex lg:flex-1 lg:justify-center">
+            <StepIndicator current={step} />
+          </div>
+          <div className="hidden lg:block lg:w-32" /> {/* Spacer for centering */}
         </div>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 md:px-8 py-6">
-        <StepIndicator current={step} />
+      <main className="mx-auto max-w-5xl px-4 md:px-8 py-6">
+        {/* Mobile step indicator */}
+        <div className="lg:hidden">
+          <StepIndicator current={step} />
+        </div>
 
         {/* Global error */}
         {error && (
@@ -332,346 +435,300 @@ export default function CheckoutPage() {
 
         {/* ---- Step 1: Contact ---- */}
         {step === 1 && (
-          <Card padding="lg">
-            <h2 className="font-heading text-xl font-bold text-primary mb-1">
-              Datos de contacto
-            </h2>
-            <p className="font-body text-sm text-secondary mb-6">
-              Usaremos esta información para enviarte los accesos de tu evento.
-            </p>
+          <div className="lg:grid lg:grid-cols-5 lg:gap-8">
+            <div className="lg:col-span-3">
+              <Card padding="lg">
+                <h2 className="font-heading text-xl font-bold text-primary mb-1">
+                  Datos de contacto
+                </h2>
+                <p className="font-body text-sm text-secondary mb-6">
+                  Usaremos esta información para enviarte los accesos de tu evento.
+                </p>
 
-            <div className="space-y-4">
-              <Input
-                label="Tu nombre"
-                type="text"
-                id="host-name"
-                placeholder="Nombre completo"
-                icon={<User className="w-4 h-4" aria-hidden="true" />}
-                value={hostName}
-                onChange={(e) => setHostName(e.target.value)}
-                autoComplete="name"
-                autoFocus
-                disabled={isLoading}
-              />
-              <Input
-                label="Correo electrónico"
-                type="email"
-                id="host-email"
-                placeholder="tu@email.com"
-                icon={<Mail className="w-4 h-4" aria-hidden="true" />}
-                value={hostEmail}
-                onChange={(e) => setHostEmail(e.target.value)}
-                autoComplete="email"
-                disabled={isLoading}
-              />
-            </div>
+                <div className="space-y-4">
+                  <Input
+                    label="Tu nombre"
+                    type="text"
+                    id="host-name"
+                    placeholder="Nombre completo"
+                    icon={<User className="w-4 h-4" aria-hidden="true" />}
+                    value={hostName}
+                    onChange={(e) => setHostName(e.target.value)}
+                    autoComplete="name"
+                    autoFocus
+                    disabled={isLoading}
+                  />
+                  <Input
+                    label="Correo electrónico"
+                    type="email"
+                    id="host-email"
+                    placeholder="tu@email.com"
+                    icon={<Mail className="w-4 h-4" aria-hidden="true" />}
+                    value={hostEmail}
+                    onChange={(e) => setHostEmail(e.target.value)}
+                    autoComplete="email"
+                    disabled={isLoading}
+                  />
+                </div>
 
-            <div className="mt-6 flex justify-end">
-              <Button
-                variant="primary"
-                size="md"
-                onClick={handleNext}
-                icon={<ChevronRight className="w-4 h-4" />}
-              >
-                Siguiente
-              </Button>
+                <div className="mt-6 flex justify-end">
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={handleNext}
+                    icon={<ChevronRight className="w-4 h-4" />}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </Card>
             </div>
-          </Card>
+            {/* Desktop right column: plan preview */}
+            <div className="hidden lg:block lg:col-span-2">
+              <Card padding="lg">
+                <h3 className="font-heading text-base font-semibold text-primary mb-3">
+                  Resumen del plan
+                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-body text-sm text-secondary">Plan seleccionado</span>
+                  <span className="font-body text-sm font-medium text-primary">{currentTier.name}</span>
+                </div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-body text-sm text-secondary">Fotos</span>
+                  <span className="font-body text-sm font-medium text-primary">{currentTier.uploads}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-body text-sm text-secondary">Duración</span>
+                  <span className="font-body text-sm font-medium text-primary">{currentTier.duration}</span>
+                </div>
+              </Card>
+            </div>
+          </div>
         )}
 
         {/* ---- Step 2: Event Details ---- */}
         {step === 2 && (
-          <Card padding="lg">
-            <h2 className="font-heading text-xl font-bold text-primary mb-1">
-              Detalles del evento
-            </h2>
-            <p className="font-body text-sm text-secondary mb-6">
-              Configura el nombre, fechas y contraseña de tu evento.
-            </p>
+          <div className="lg:grid lg:grid-cols-5 lg:gap-8">
+            <div className="lg:col-span-3">
+              <Card padding="lg">
+                <h2 className="font-heading text-xl font-bold text-primary mb-1">
+                  Detalles del evento
+                </h2>
+                <p className="font-body text-sm text-secondary mb-6">
+                  Tus invitados podrán subir fotos una vez tu evento inicie y durante las siguientes 24 horas.
+                </p>
 
-            <div className="space-y-4">
-              <Input
-                label="Nombre del evento"
-                type="text"
-                id="event-title"
-                placeholder="Ej. Boda de Ana y Luis"
-                icon={<FileText className="w-4 h-4" aria-hidden="true" />}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                autoFocus
-                disabled={isLoading}
-              />
-              <Input
-                label="Descripción (opcional)"
-                type="text"
-                id="event-description"
-                placeholder="Una breve descripción del evento"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                disabled={isLoading}
-              />
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Input
-                  label="Fecha de inicio"
-                  type="date"
-                  id="event-start"
-                  icon={<Calendar className="w-4 h-4" aria-hidden="true" />}
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  disabled={isLoading}
-                />
-                <Input
-                  label="Fecha de fin"
-                  type="date"
-                  id="event-end"
-                  icon={<Calendar className="w-4 h-4" aria-hidden="true" />}
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  disabled={isLoading}
-                />
-              </div>
-              <Input
-                label="Contraseña para invitados"
-                type="text"
-                id="guest-password"
-                placeholder="Mínimo 4 caracteres"
-                icon={<Lock className="w-4 h-4" aria-hidden="true" />}
-                value={guestPassword}
-                onChange={(e) => setGuestPassword(e.target.value)}
-                disabled={isLoading}
-              />
-            </div>
+                <div className="space-y-4">
+                  <Input
+                    label="Nombre del evento"
+                    type="text"
+                    id="event-title"
+                    placeholder="Ej. Boda de Ana y Luis"
+                    icon={<FileText className="w-4 h-4" aria-hidden="true" />}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    autoFocus
+                    disabled={isLoading}
+                  />
+                  <Input
+                    label="Descripción (opcional)"
+                    type="text"
+                    id="event-description"
+                    placeholder="Una breve descripción del evento"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    disabled={isLoading}
+                  />
+                  <Input
+                    label="Fecha y hora del evento"
+                    type="datetime-local"
+                    id="event-start"
+                    icon={<Calendar className="w-4 h-4" aria-hidden="true" />}
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    disabled={isLoading}
+                  />
+                </div>
 
-            <div className="mt-6 flex justify-between">
-              <Button
-                variant="secondary"
-                size="md"
-                onClick={handleBack}
-                icon={<ChevronLeft className="w-4 h-4" />}
-              >
-                Atrás
-              </Button>
-              <Button
-                variant="primary"
-                size="md"
-                onClick={handleNext}
-                icon={<ChevronRight className="w-4 h-4" />}
-              >
-                Siguiente
-              </Button>
+                <div className="mt-6 flex justify-between">
+                  <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={handleBack}
+                    icon={<ChevronLeft className="w-4 h-4" />}
+                  >
+                    Atrás
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={handleNext}
+                    icon={<ChevronRight className="w-4 h-4" />}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </Card>
             </div>
-          </Card>
+            {/* Desktop right column: plan preview */}
+            <div className="hidden lg:block lg:col-span-2">
+              <Card padding="lg">
+                <h3 className="font-heading text-base font-semibold text-primary mb-3">
+                  Resumen del plan
+                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-body text-sm text-secondary">Plan seleccionado</span>
+                  <span className="font-body text-sm font-medium text-primary">{currentTier.name}</span>
+                </div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="font-body text-sm text-secondary">Precio</span>
+                  <span className="font-body text-sm font-medium text-primary">{price}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-body text-sm text-secondary">Duración</span>
+                  <span className="font-body text-sm font-medium text-primary">{currentTier.duration}</span>
+                </div>
+              </Card>
+            </div>
+          </div>
         )}
 
         {/* ---- Step 3: Plan Selection + Payment ---- */}
         {step === 3 && (
-          <>
-            <h2 className="font-heading text-xl font-bold text-primary mb-1">
-              Elige tu plan
-            </h2>
-            <p className="font-body text-sm text-secondary mb-4">
-              Selecciona el plan que mejor se adapte a tu evento.
-            </p>
+          <div className="lg:grid lg:grid-cols-5 lg:gap-8">
+            <div className="lg:col-span-3">
+              <h2 className="font-heading text-xl font-bold text-primary mb-1">
+                Elige tu plan
+              </h2>
+              <p className="font-body text-sm text-secondary mb-4">
+                Selecciona el plan que mejor se adapte a tu evento.
+              </p>
 
-            {/* Currency toggle */}
-            <div className="flex items-center gap-2 mb-6">
-              <span className="font-body text-sm text-secondary">Moneda:</span>
-              <div className="inline-flex rounded-pill border border-border-subtle overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setCurrency('USD')}
-                  className={[
-                    'px-4 py-1.5 font-body text-sm font-medium transition-colors',
-                    currency === 'USD'
-                      ? 'bg-accent-green text-white'
-                      : 'bg-white text-secondary hover:bg-muted',
-                  ].join(' ')}
-                >
-                  USD
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCurrency('GTQ')}
-                  className={[
-                    'px-4 py-1.5 font-body text-sm font-medium transition-colors',
-                    currency === 'GTQ'
-                      ? 'bg-accent-green text-white'
-                      : 'bg-white text-secondary hover:bg-muted',
-                  ].join(' ')}
-                >
-                  GTQ
-                </button>
-              </div>
-            </div>
-
-            {/* Tier cards */}
-            <div className="grid gap-4 md:grid-cols-3 mb-6">
-              {TIERS.map((tier) => {
-                const isSelected = selectedTier === tier.id;
-                const displayPrice = currency === 'USD'
-                  ? `$${tier.priceUSD}`
-                  : `Q${tier.priceGTQ}`;
-
-                return (
+              {/* Currency toggle */}
+              <div className="flex items-center gap-2 mb-6">
+                <span className="font-body text-sm text-secondary">Moneda:</span>
+                <div className="inline-flex rounded-pill border border-border-subtle overflow-hidden">
                   <button
-                    key={tier.id}
                     type="button"
-                    onClick={() => setSelectedTier(tier.id)}
+                    onClick={() => setCurrency('USD')}
                     className={[
-                      'relative flex flex-col text-left rounded-card shadow-card bg-card border-2 overflow-hidden transition-all',
-                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-green focus-visible:ring-offset-1',
-                      isSelected
-                        ? 'border-accent-green ring-1 ring-accent-green'
-                        : 'border-border-subtle hover:border-border-strong',
+                      'px-4 py-1.5 font-body text-sm font-medium transition-colors',
+                      currency === 'USD'
+                        ? 'bg-accent text-white'
+                        : 'bg-white text-secondary hover:bg-muted',
                     ].join(' ')}
                   >
-                    {/* Badge */}
-                    {tier.badge && (
-                      <div className="absolute top-3 right-3">
-                        <span
-                          className={[
-                            'inline-block px-2 py-0.5 rounded-pill text-xs font-semibold font-body',
-                            tier.badgeStyle ?? '',
-                          ].join(' ')}
-                        >
-                          {tier.badge}
-                        </span>
-                      </div>
-                    )}
-
-                    <div className="p-5 flex-1">
-                      {/* Selected indicator */}
-                      <div className="flex items-center gap-2 mb-2">
-                        <div
-                          className={[
-                            'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors',
-                            isSelected
-                              ? 'border-accent-green bg-accent-green'
-                              : 'border-border-strong bg-white',
-                          ].join(' ')}
-                        >
-                          {isSelected && (
-                            <Check className="w-3 h-3 text-white" aria-hidden="true" />
-                          )}
-                        </div>
-                        <h3 className="font-heading text-lg font-bold text-primary">
-                          {tier.name}
-                        </h3>
-                      </div>
-
-                      <div className="flex items-end gap-1 mb-4">
-                        <span className="font-heading text-3xl font-bold text-primary">
-                          {displayPrice}
-                        </span>
-                        <span className="font-body text-sm text-secondary mb-1">
-                          / evento
-                        </span>
-                      </div>
-
-                      <ul className="space-y-2">
-                        {tier.features.map((feature) => (
-                          <li key={feature} className="flex items-start gap-2">
-                            <Check
-                              className="w-4 h-4 text-accent-green shrink-0 mt-0.5"
-                              aria-hidden="true"
-                            />
-                            <span className="font-body text-sm text-secondary">{feature}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    USD
                   </button>
-                );
-              })}
+                  <button
+                    type="button"
+                    onClick={() => setCurrency('GTQ')}
+                    className={[
+                      'px-4 py-1.5 font-body text-sm font-medium transition-colors',
+                      currency === 'GTQ'
+                        ? 'bg-accent text-white'
+                        : 'bg-white text-secondary hover:bg-muted',
+                    ].join(' ')}
+                  >
+                    GTQ
+                  </button>
+                </div>
+              </div>
+
+              {/* Tier cards */}
+              <div className="grid gap-4 md:grid-cols-3 mb-6">
+                {TIERS.map((tier) => {
+                  const isSelected = selectedTier === tier.id;
+                  const displayPrice = currency === 'USD'
+                    ? `$${tier.priceUSD}`
+                    : `Q${tier.priceGTQ}`;
+
+                  return (
+                    <button
+                      key={tier.id}
+                      type="button"
+                      onClick={() => setSelectedTier(tier.id)}
+                      className={[
+                        'relative flex flex-col text-left rounded-card shadow-card bg-card border-2 overflow-hidden transition-all',
+                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1',
+                        isSelected
+                          ? 'border-accent ring-1 ring-accent'
+                          : 'border-border-subtle hover:border-border-strong',
+                      ].join(' ')}
+                    >
+                      {/* Badge */}
+                      {tier.badge && (
+                        <div className="absolute top-3 right-3">
+                          <span
+                            className={[
+                              'inline-block px-2 py-0.5 rounded-pill text-xs font-semibold font-body',
+                              tier.badgeStyle ?? '',
+                            ].join(' ')}
+                          >
+                            {tier.badge}
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="p-5 flex-1">
+                        {/* Selected indicator */}
+                        <div className="flex items-center gap-2 mb-2">
+                          <div
+                            className={[
+                              'w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors',
+                              isSelected
+                                ? 'border-accent bg-accent'
+                                : 'border-border-strong bg-white',
+                            ].join(' ')}
+                          >
+                            {isSelected && (
+                              <Check className="w-3 h-3 text-white" aria-hidden="true" />
+                            )}
+                          </div>
+                          <h3 className="font-heading text-lg font-bold text-primary">
+                            {tier.name}
+                          </h3>
+                        </div>
+
+                        <div className="flex items-end gap-1 mb-4">
+                          <span className="font-heading text-3xl font-bold text-primary">
+                            {displayPrice}
+                          </span>
+                          <span className="font-body text-sm text-secondary mb-1">
+                            / evento
+                          </span>
+                        </div>
+
+                        <ul className="space-y-2">
+                          {tier.features.map((feature) => (
+                            <li key={feature} className="flex items-start gap-2">
+                              <Check
+                                className="w-4 h-4 text-accent shrink-0 mt-0.5"
+                                aria-hidden="true"
+                              />
+                              <span className="font-body text-sm text-secondary">{feature}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Mobile only: promo + summary inline */}
+              <div className="lg:hidden">
+                {promoSection}
+                {summarySection}
+              </div>
             </div>
 
-            {/* Promo code */}
-            <Card padding="md" className="mb-6">
-              <div className="flex gap-2 items-end">
-                <div className="flex-1">
-                  <Input
-                    label="Código promocional"
-                    type="text"
-                    id="promo-code"
-                    placeholder="Ej. EVENTO2026"
-                    icon={<Tag className="w-4 h-4" aria-hidden="true" />}
-                    value={promoCode}
-                    onChange={(e) => {
-                      setPromoCode(e.target.value);
-                      setPromoError('');
-                      setPromoApplied(false);
-                    }}
-                    error={promoError || undefined}
-                    disabled={isLoading}
-                  />
-                </div>
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={handleApplyPromo}
-                  disabled={isLoading}
-                  className="mb-0"
-                >
-                  Aplicar
-                </Button>
-              </div>
-              {promoApplied && (
-                <p className="mt-2 font-body text-xs text-accent-green">
-                  Código aplicado correctamente.
-                </p>
-              )}
-            </Card>
-
-            {/* Summary & CTA */}
-            <Card padding="lg" className="mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="font-heading text-base font-semibold text-primary">
-                    Plan {currentTier.name}
-                  </p>
-                  <p className="font-body text-sm text-secondary">
-                    {currentTier.uploads} fotos &middot; {currentTier.duration}
-                  </p>
-                </div>
-                <p className="font-heading text-2xl font-bold text-primary">
-                  {price}
-                </p>
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-                <Button
-                  variant="secondary"
-                  size="md"
-                  onClick={handleBack}
-                  icon={<ChevronLeft className="w-4 h-4" />}
-                >
-                  Atrás
-                </Button>
-
-                {selectedTier === 'basic' ? (
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    loading={isLoading}
-                    disabled={isLoading}
-                    onClick={handleCreateEvent}
-                  >
-                    {isLoading ? 'Creando...' : 'Crear evento gratis'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primary"
-                    size="lg"
-                    loading={isLoading}
-                    disabled={isLoading}
-                    onClick={handleCreateEvent}
-                  >
-                    {isLoading ? 'Procesando...' : 'Crear evento y pagar'}
-                  </Button>
-                )}
-              </div>
-            </Card>
-          </>
+            {/* Desktop right column: promo + summary */}
+            <div className="hidden lg:block lg:col-span-2">
+              {promoSection}
+              {summarySection}
+            </div>
+          </div>
         )}
       </main>
     </div>

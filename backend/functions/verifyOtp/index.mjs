@@ -1,10 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
 
-import { getItem, updateItem, deleteItem, putItem } from '../../shared/dynamodb.mjs';
-import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '../../shared/response.mjs';
-import { authenticateRequest, signJwt } from '../../shared/auth.mjs';
-import { parseBody } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, updateItem, deleteItem, putItem } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '/opt/nodejs/response.mjs';
+import { authenticateRequest, signJwt } from '/opt/nodejs/auth.mjs';
+import { parseBody } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const MAX_ATTEMPTS = 5;
 const GUEST_SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours

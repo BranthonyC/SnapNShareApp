@@ -1,15 +1,15 @@
 import { nanoid } from 'nanoid';
 import { createHash } from 'node:crypto';
 
-import { getItem, putItem, updateItem } from '../../shared/dynamodb.mjs';
-import { created, validationError, serverError, error } from '../../shared/response.mjs';
-import { signJwt, hashPassword, generateSessionId } from '../../shared/auth.mjs';
-import { getTierConfig, getFeatureFlag } from '../../shared/config.mjs';
-import { sendEventCreatedEmail } from '../../shared/email.mjs';
-import { validateCreateEvent, parseBody, sanitizeHtml } from '../../shared/validation.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, putItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
+import { created, validationError, serverError, error } from '/opt/nodejs/response.mjs';
+import { signJwt, hashPassword, generateSessionId } from '/opt/nodejs/auth.mjs';
+import { getTierConfig, getFeatureFlag } from '/opt/nodejs/config.mjs';
+import { sendEventCreatedEmail } from '/opt/nodejs/email.mjs';
+import { validateCreateEvent, parseBody, sanitizeHtml } from '/opt/nodejs/validation.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
-const FRONTEND_URL = process.env.FRONTEND_URL || 'https://eventalbum.codersatelier.com';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://snapnshare.app';
 
 // Storage retention in days by tier (used to compute expiresAtTTL on the EVENT record itself)
 const RETENTION_DAYS = {
@@ -35,12 +35,15 @@ export async function handler(event) {
       description = '',
       hostEmail,
       hostName,
-      guestPassword,
-      hostPassword,      // optional: host sets their own admin password
+      guestPassword = null,  // optional — events are public via QR/link
+      hostPassword,          // optional: host sets their own admin password
       startDate,
-      endDate,
+      timezone = 'America/Guatemala',
       tier = 'basic',
     } = body;
+
+    // Auto-compute endDate: startDate + 24h (startDate includes timezone offset from frontend)
+    const endDate = body.endDate || new Date(new Date(startDate).getTime() + 24 * 60 * 60 * 1000).toISOString();
 
     // ── Feature flag: maintenance mode ─────────────────────────────────────
     const maintenance = await getFeatureFlag('maintenance-mode');
@@ -94,17 +97,20 @@ export async function handler(event) {
       description: sanitizeHtml(description),
       hostEmail: hostEmail.toLowerCase(),
       hostName: sanitizeHtml(hostName),
-      guestPassword,            // stored plaintext — shared via QR
+      guestPassword: guestPassword ?? undefined,  // optional — events are public via QR/link
       hostPasswordHash: hostPasswordHash ?? undefined,
 
       // Media / cover
       coverUrl: null,
       footerText: null,
       welcomeMessage: null,
+      location: null,
+      schedule: [],
 
       // Dates
       startDate,
       endDate,
+      timezone,
       createdAt: now,
       expiresAt,
       expiresAtTTL,
@@ -127,7 +133,7 @@ export async function handler(event) {
       autoApprove: tier === 'premium',
 
       // Payment
-      paymentStatus: tier === 'basic' ? 'free' : 'unpaid',
+      paymentStatus: 'unpaid',
       checkoutId: null,
 
       // Analytics
@@ -175,10 +181,7 @@ export async function handler(event) {
     const qrUrl = `${FRONTEND_URL}/e/${eventId}`;
     const adminUrl = `${FRONTEND_URL}/e/${eventId}/admin`;
 
-    // ── Send confirmation email (fire-and-forget — do not block response) ──
-    sendEventCreatedEmail(hostEmail, { eventId, title, qrUrl, tier }).catch((err) => {
-      logger.warn('Failed to send event creation email', { eventId, error: err.message });
-    });
+    // ── Email sent after payment confirmed (in handleWebhook) for all tiers ──
 
     // ── Response ───────────────────────────────────────────────────────────
     return created({

@@ -12,6 +12,7 @@ import QRPage from '@/pages/host/QRPage';
 import SettingsPage from '@/pages/host/SettingsPage';
 import ModerationPage from '@/pages/host/ModerationPage';
 import GalleryManagePage from '@/pages/host/GalleryManagePage';
+import UpgradePage from '@/pages/host/UpgradePage';
 import CheckoutPage from '@/pages/checkout/CheckoutPage';
 import NotFoundPage from '@/pages/NotFoundPage';
 
@@ -31,6 +32,7 @@ export default function App() {
       <Route path="/e/:eventId/admin/moderation" element={<ModerationPage />} />
       <Route path="/e/:eventId/admin/gallery" element={<GalleryManagePage />} />
       <Route path="/e/:eventId/admin/settings" element={<SettingsPage />} />
+      <Route path="/e/:eventId/admin/upgrade" element={<UpgradePage />} />
       <Route path="/auth/host" element={<HostLoginPage />} />
       <Route path="/checkout" element={<CheckoutPage />} />
       <Route path="*" element={<NotFoundPage />} />

@@ -1,0 +1,7 @@
+{
+  "uploads": { "count": 12, "limit": 500, "byType": { "image/jpeg": 10, "image/png": 2 } },
+  "guests": { "total": 8, "verified": 6 },
+  "reactions": { "total": 15, "byEmoji": { "❤️": 10, "🔥": 3, "😂": 2 } },
+  "storage": { "totalBytes": 48000000, "byType": { "image/jpeg": 40000000, "image/png": 8000000 } },
+  "moderation": { "pending": 1, "approved": 10, "rejected": 0, "reported": 1 }
+}

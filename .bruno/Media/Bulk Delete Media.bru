@@ -1,0 +1,21 @@
+meta {
+  name: Bulk Delete Media
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/media/bulk-delete
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
+
+body:json {
+  {
+    "mediaIds": ["med_001", "med_002"]
+  }
+}

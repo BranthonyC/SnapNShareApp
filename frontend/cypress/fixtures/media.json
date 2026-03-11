@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "mediaId": "med_001",
+      "thumbnailUrl": "https://via.placeholder.com/300",
+      "fullUrl": "https://via.placeholder.com/800",
+      "fileType": "image/jpeg",
+      "uploadedBy": "María",
+      "uploadedAt": "2026-03-15T20:30:00Z",
+      "status": "approved",
+      "reactionCounts": { "❤️": 3, "🔥": 1 },
+      "commentCount": 2
+    },
+    {
+      "mediaId": "med_002",
+      "thumbnailUrl": "https://via.placeholder.com/300",
+      "fullUrl": "https://via.placeholder.com/800",
+      "fileType": "image/jpeg",
+      "uploadedBy": "Pedro",
+      "uploadedAt": "2026-03-15T21:00:00Z",
+      "status": "approved",
+      "reactionCounts": { "❤️": 5 },
+      "commentCount": 0
+    },
+    {
+      "mediaId": "med_003",
+      "thumbnailUrl": "https://via.placeholder.com/300",
+      "fullUrl": "https://via.placeholder.com/800",
+      "fileType": "image/jpeg",
+      "uploadedBy": "Lucía",
+      "uploadedAt": "2026-03-15T21:15:00Z",
+      "status": "pending",
+      "reactionCounts": {},
+      "commentCount": 0
+    }
+  ],
+  "nextCursor": null,
+  "total": 3
+}

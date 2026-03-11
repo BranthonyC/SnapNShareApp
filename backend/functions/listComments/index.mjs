@@ -1,7 +1,7 @@
-import { queryItems } from '../../shared/dynamodb.mjs';
-import { ok, validationError, unauthorized, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, validationError, unauthorized, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -27,14 +27,23 @@ export async function handler(event) {
     if (limit < 1) limit = DEFAULT_LIMIT;
 
     // ── Query comments for this media item ──────────────────────────────
+    // Guests only see 'visible' comments; hosts see all
+    const queryOpts = {
+      limit,
+      cursor,
+      scanForward: true, // ascending by createdAt (embedded in SK)
+    };
+
+    if (auth.role !== 'host') {
+      queryOpts.filterExpr = '(attribute_not_exists(#st) OR #st = :visible)';
+      queryOpts.exprNames = { '#st': 'status' };
+      queryOpts.exprValues = { ':visible': 'visible' };
+    }
+
     const { items, nextCursor } = await queryItems(
       `MEDIA#${mediaId}`,
       'COMMENT#',
-      {
-        limit,
-        cursor,
-        scanForward: true, // ascending by createdAt (embedded in SK)
-      },
+      queryOpts,
     );
 
     // ── Strip internal keys from each comment ───────────────────────────

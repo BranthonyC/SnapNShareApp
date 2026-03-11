@@ -1,7 +1,7 @@
-import { getItem, queryItems } from '../../shared/dynamodb.mjs';
-import { ok, unauthorized, notFound, serverError } from '../../shared/response.mjs';
-import { authenticateRequest } from '../../shared/auth.mjs';
-import { logger } from '../../shared/logger.mjs';
+import { getItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
+import { ok, unauthorized, notFound, serverError } from '/opt/nodejs/response.mjs';
+import { authenticateRequest } from '/opt/nodejs/auth.mjs';
+import { logger } from '/opt/nodejs/logger.mjs';
 
 const CLOUDFRONT_DOMAIN = process.env.CLOUDFRONT_DOMAIN || '';
 
@@ -58,7 +58,7 @@ export async function handler(event) {
       return unauthorized();
     }
 
-    const { eventId: tokenEventId, role } = claims;
+    const { eventId: tokenEventId, eventIds: tokenEventIds, role } = claims;
 
     // ── Path param ─────────────────────────────────────────────────────────
     const eventId = event.pathParameters?.eventId;
@@ -66,7 +66,11 @@ export async function handler(event) {
       return notFound('EVENT_NOT_FOUND', 'Event not found');
     }
 
-    if (tokenEventId !== eventId) {
+    // Host JWTs have eventIds (plural array); guest JWTs have eventId (singular)
+    if (tokenEventIds && !tokenEventIds.includes(eventId)) {
+      return unauthorized('Token is not valid for this event');
+    }
+    if (!tokenEventIds && tokenEventId !== eventId) {
       return unauthorized('Token is not valid for this event');
     }
 

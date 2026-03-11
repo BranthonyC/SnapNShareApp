@@ -1,0 +1,15 @@
+meta {
+  name: Download ZIP
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/events/{{eventId}}/download-zip
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{hostToken}}
+}
