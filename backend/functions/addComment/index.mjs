@@ -2,6 +2,7 @@ import { getItem, putItem, queryItems, updateItem } from '/opt/nodejs/dynamodb.m
 import { ok, created, validationError, notFound, unauthorized, forbidden, serverError } from '/opt/nodejs/response.mjs';
 import { authenticateRequest, generateSessionId } from '/opt/nodejs/auth.mjs';
 import { parseBody, sanitizeHtml, validateComment } from '/opt/nodejs/validation.mjs';
+import { broadcast } from '/opt/nodejs/broadcast.mjs';
 import { logger } from '/opt/nodejs/logger.mjs';
 
 /**
@@ -85,6 +86,7 @@ export async function handler(event) {
           logger.warn('Failed to decrement likeCount', { error: e.message });
         }
         logger.info('Comment unliked', { commentId: body.commentId, sessionId: auth.sub });
+        broadcast(eventId, { type: 'comment_updated', mediaId }).catch(() => {});
         return ok({ liked: false, commentId: body.commentId });
       } else {
         await putItem({ PK: likePK, SK: likeSK, sessionId: auth.sub, createdAt: new Date().toISOString() });
@@ -98,6 +100,7 @@ export async function handler(event) {
           logger.warn('Failed to increment likeCount', { error: e.message });
         }
         logger.info('Comment liked', { commentId: body.commentId, sessionId: auth.sub });
+        broadcast(eventId, { type: 'comment_updated', mediaId }).catch(() => {});
         return ok({ liked: true, commentId: body.commentId });
       }
     }
@@ -162,6 +165,9 @@ export async function handler(event) {
     }
 
     logger.info('Comment added', { eventId, mediaId, commentId, status: commentStatus, sessionId: auth.sub });
+
+    // Notify other guests in this event
+    broadcast(eventId, { type: 'comment_added', mediaId }).catch(() => {});
 
     return created({
       commentId,

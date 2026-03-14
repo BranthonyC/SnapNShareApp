@@ -166,7 +166,7 @@ export default function UpgradePage() {
         currency,
         isUpgrade: true,
       });
-      window.location.href = checkout.checkoutUrl;
+      window.location.href = checkout.checkoutUrl!;
     } catch (err) {
       const apiErr = err as ApiError;
       setError(apiErr.message || 'No se pudo iniciar el pago. Intenta más tarde.');

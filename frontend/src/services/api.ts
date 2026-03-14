@@ -125,8 +125,11 @@ export const moderateMedia = (eventId: string, mediaId: string, action: 'approve
 export const createCheckout = (eventId: string, data: CreateCheckoutRequest) =>
   request<CreateCheckoutResponse>(`/events/${eventId}/checkout`, { method: 'POST', body: JSON.stringify(data) });
 
-export const validatePromo = (eventId: string, code: string, tier: string) =>
-  request<ValidatePromoResponse>(`/events/${eventId}/promo`, { method: 'POST', body: JSON.stringify({ code, tier }) });
+export const validatePromo = (eventId: string, code: string, tier: string, currency: string) =>
+  request<ValidatePromoResponse>(`/events/${eventId}/promo`, { method: 'POST', body: JSON.stringify({ code, tier, currency }) });
+
+export const verifyPayment = (eventId: string) =>
+  request<VerifyPaymentResponse>(`/events/${eventId}/verify-payment`, { method: 'POST' });
 
 // Download
 export const downloadZip = (eventId: string) =>
@@ -301,17 +304,32 @@ export interface CreateCheckoutRequest {
 }
 
 export interface CreateCheckoutResponse {
-  checkoutUrl: string;
-  checkoutId: string;
-  amount: number;
+  checkoutUrl: string | null;
+  checkoutId: string | null;
+  originalAmount: number;
+  discountAmount: number;
+  finalAmount: number;
   currency: string;
-  discount?: number;
+  activated?: boolean;
 }
 
 export interface ValidatePromoResponse {
   valid: boolean;
-  discount?: { type: 'percent' | 'fixed'; value: number };
-  message?: string;
+  reason?: string;
+  type?: 'percent' | 'fixed';
+  value?: number;
+  discountAmount?: number;
+  finalAmount?: number;
+  currency?: string;
+}
+
+export interface VerifyPaymentResponse {
+  paymentStatus: string;
+  alreadyPaid?: boolean;
+  verified?: boolean;
+  noCheckout?: boolean;
+  verificationFailed?: boolean;
+  checkoutStatus?: string;
 }
 
 export interface QrStatsResponse {

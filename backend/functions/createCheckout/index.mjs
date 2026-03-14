@@ -1,7 +1,7 @@
 import { getItem, updateItem } from '/opt/nodejs/dynamodb.mjs';
 import { ok, validationError, forbidden, unauthorized, notFound, serverError, error } from '/opt/nodejs/response.mjs';
 import { authenticateRequest } from '/opt/nodejs/auth.mjs';
-import { getSecret } from '/opt/nodejs/config.mjs';
+import { getSecret, getTierConfig } from '/opt/nodejs/config.mjs';
 import { parseBody } from '/opt/nodejs/validation.mjs';
 import { logger } from '/opt/nodejs/logger.mjs';
 
@@ -151,6 +151,65 @@ export async function handler(event) {
 
     const finalAmount = originalAmount - discountAmount;
 
+    // ── Zero-amount: skip Recurrente, activate event directly ────────
+    if (finalAmount <= 0) {
+      const tierConfig = await getTierConfig(tier);
+      const now = new Date().toISOString();
+      const RETENTION_DAYS = { basic: 15, paid: 180, premium: 365 };
+      const retentionDays = tierConfig?.storageDays ?? RETENTION_DAYS[tier] ?? 15;
+      const newExpiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000);
+
+      await updateItem(
+        `EVENT#${eventId}`,
+        'METADATA',
+        'SET #tier = :tier, #uploadLimit = :uploadLimit, #mediaTypes = :mediaTypes, #paymentStatus = :paymentStatus, #expiresAt = :expiresAt, #expiresAtTTL = :expiresAtTTL, #allowDownloads = :allowDownloads, #allowVideo = :allowVideo, #autoApprove = :autoApprove, #maxFileSizeBytes = :maxFileSizeBytes, #paidAt = :paidAt, #updatedAt = :updatedAt',
+        {
+          ':tier': tier,
+          ':uploadLimit': tierConfig?.uploadLimit ?? 150,
+          ':mediaTypes': tierConfig?.mediaTypes ?? ['image/jpeg', 'image/png', 'image/webp'],
+          ':paymentStatus': 'paid',
+          ':expiresAt': newExpiresAt.toISOString(),
+          ':expiresAtTTL': Math.floor(newExpiresAt.getTime() / 1000),
+          ':allowDownloads': tier !== 'basic',
+          ':allowVideo': tier !== 'basic',
+          ':autoApprove': tier === 'premium',
+          ':maxFileSizeBytes': tierConfig?.maxFileSizeBytes ?? 10485760,
+          ':paidAt': now,
+          ':updatedAt': now,
+        },
+        {
+          '#tier': 'tier',
+          '#uploadLimit': 'uploadLimit',
+          '#mediaTypes': 'mediaTypes',
+          '#paymentStatus': 'paymentStatus',
+          '#expiresAt': 'expiresAt',
+          '#expiresAtTTL': 'expiresAtTTL',
+          '#allowDownloads': 'allowDownloads',
+          '#allowVideo': 'allowVideo',
+          '#autoApprove': 'autoApprove',
+          '#maxFileSizeBytes': 'maxFileSizeBytes',
+          '#paidAt': 'paidAt',
+          '#updatedAt': 'updatedAt',
+        },
+      );
+
+      logger.info('Event activated with 100% discount (no Recurrente)', {
+        eventId,
+        tier,
+        discountCode,
+      });
+
+      return ok({
+        checkoutUrl: null,
+        checkoutId: null,
+        originalAmount,
+        discountAmount,
+        finalAmount: 0,
+        currency,
+        activated: true,
+      });
+    }
+
     // ── Get Recurrente API keys ───────────────────────────────────────
     const [publicKey, secretKey] = await Promise.all([
       getSecret('recurrente-public-key'),
@@ -162,8 +221,8 @@ export async function handler(event) {
 
     const tierLabel = tier.charAt(0).toUpperCase() + tier.slice(1);
     const itemName = isUpgrade
-      ? `Loving Memory Upgrade → ${tierLabel} Plan`
-      : `Loving Memory ${tierLabel} Plan`;
+      ? `snapNshare Upgrade → ${tierLabel} Plan`
+      : `snapNshare ${tierLabel} Plan`;
 
     const metadata = {
       event_id: eventId,

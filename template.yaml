@@ -26,6 +26,7 @@ Globals:
           - !Ref FrontendUrl
         SECRETS_PREFIX: /eventalbum/secrets
         RECURRENTE_SSM_PREFIX: !Sub /eventalbum/${Environment}/secrets
+        WS_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
 
 Parameters:
   Environment:
@@ -423,6 +424,9 @@ Resources:
             - Effect: Allow
               Action: [ses:SendEmail, sesv2:SendEmail]
               Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/*
 
   ListMediaFunction:
     Type: AWS::Serverless::Function
@@ -595,6 +599,10 @@ Resources:
             TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
+        - Statement:
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/*
 
   AddCommentFunction:
     Type: AWS::Serverless::Function
@@ -614,6 +622,10 @@ Resources:
             TableName: !Sub EventAlbum-${Environment}
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
+        - Statement:
+            - Effect: Allow
+              Action: execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/${Environment}/*
 
   ListCommentsFunction:
     Type: AWS::Serverless::Function
@@ -799,6 +811,36 @@ Resources:
         - SSMParameterReadPolicy:
             ParameterName: eventalbum/secrets/jwt-secret
 
+  VerifyPaymentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub EventAlbum-${Environment}-verifyPayment
+      CodeUri: backend/functions/verifyPayment/
+      Handler: index.handler
+      Timeout: 15
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events/{eventId}/verify-payment
+            Method: POST
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Sub EventAlbum-${Environment}
+        - SSMParameterReadPolicy:
+            ParameterName: !Sub eventalbum/${Environment}/secrets/recurrente-*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/config/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/features/*
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/secrets/jwt-secret
+        - Statement:
+            - Effect: Allow
+              Action: [ses:SendEmail, sesv2:SendEmail]
+              Resource: !Sub arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*
+
   # =============================
   # ZIP DOWNLOAD
   # =============================
@@ -901,6 +943,123 @@ Resources:
             TableName: !Sub EventAlbum-${Environment}
         - S3CrudPolicy:
             BucketName: !Sub eventalbum-media-${Environment}
+
+  # =============================
+  # WEBSOCKET API
+  # =============================
+
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub EventAlbum-${Environment}-ws
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: $request.body.action
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  # --- $connect ---
+  WsConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub EventAlbum-${Environment}-wsConnect
+      CodeUri: backend/functions/wsConnect/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Sub EventAlbum-${Environment}
+        - SSMParameterReadPolicy:
+            ParameterName: eventalbum/secrets/jwt-secret
+
+  WsConnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsConnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$connect
+
+  WsConnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsConnectFunction.Arn}/invocations
+
+  WsConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub integrations/${WsConnectIntegration}
+
+  # --- $disconnect ---
+  WsDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub EventAlbum-${Environment}-wsDisconnect
+      CodeUri: backend/functions/wsDisconnect/
+      Handler: index.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Sub EventAlbum-${Environment}
+
+  WsDisconnectPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsDisconnectFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$disconnect
+
+  WsDisconnectIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDisconnectFunction.Arn}/invocations
+
+  WsDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub integrations/${WsDisconnectIntegration}
+
+  # --- $default ---
+  WsDefaultFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub EventAlbum-${Environment}-wsDefault
+      CodeUri: backend/functions/wsDefault/
+      Handler: index.handler
+
+  WsDefaultPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WsDefaultFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*/$default
+
+  WsDefaultIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WsDefaultFunction.Arn}/invocations
+
+  WsDefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      Target: !Sub integrations/${WsDefaultIntegration}
 
   # =============================
   # DATABASE
@@ -1226,6 +1385,8 @@ Outputs:
     Value: !Ref FrontendDistribution
   TableName:
     Value: !Sub EventAlbum-${Environment}
+  WebSocketUrl:
+    Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
   FrontendUrl:
     Value: !If
       - HasCertificate

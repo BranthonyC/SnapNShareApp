@@ -22,6 +22,7 @@ import { RekognitionClient, DetectModerationLabelsCommand } from '@aws-sdk/clien
 
 import { getItem, updateItem, queryItems } from '/opt/nodejs/dynamodb.mjs';
 import { sendModerationAlertEmail } from '/opt/nodejs/email.mjs';
+import { broadcast } from '/opt/nodejs/broadcast.mjs';
 import { logger } from '/opt/nodejs/logger.mjs';
 
 const s3 = new S3Client({});
@@ -225,6 +226,11 @@ async function processRecord(record) {
   );
 
   logger.info(`Media marked ${initialStatus}`, { eventId, mediaId, detectedMime, autoApprove });
+
+  // Notify connected guests that a new photo is available
+  if (initialStatus === 'visible') {
+    broadcast(eventId, { type: 'media_added', mediaId }).catch(() => {});
+  }
 
   // ── Premium NSFW moderation via Rekognition ─────────────────────────
   // Only run for images on Premium tier when autoApprove is OFF

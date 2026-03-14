@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { X, ChevronLeft, ChevronRight, Heart, ThumbsUp, PartyPopper, MessageCircle, Send } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import Spinner from '@/components/ui/Spinner';
 import { useMedia } from '@/hooks/useMedia';
+import { useEventSocket } from '@/hooks/useEventSocket';
 import { useAuthStore } from '@/stores/authStore';
 import * as api from '@/services/api';
 import type { MediaItem, CommentItem } from '@/services/api';
@@ -143,7 +145,11 @@ export default function MediaViewPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated } = useAuthStore();
+  const queryClient = useQueryClient();
   const cameFromAdmin = (location.state as { from?: string })?.from === 'admin';
+
+  // Real-time updates from other guests in this event
+  useEventSocket(eventId);
 
   // Auth guard
   useEffect(() => {
@@ -285,6 +291,7 @@ export default function MediaViewPage() {
 
     try {
       await api.addReaction(eventId, mediaId, emoji);
+      queryClient.invalidateQueries({ queryKey: ['media', eventId] });
     } catch {
       // Revert on failure
       setLocalReactions((prev) => ({
@@ -358,6 +365,7 @@ export default function MediaViewPage() {
       await api.addComment(eventId, mediaId, commentText.trim());
       setCommentText('');
       await loadComments();
+      queryClient.invalidateQueries({ queryKey: ['media', eventId] });
       // Scroll to bottom after new comment
       setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
     } catch {

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { Camera, Upload, X, CheckCircle, AlertCircle, ImagePlus } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import PageLayout from '@/components/layout/PageLayout';
 import Button from '@/components/ui/Button';
 import Spinner from '@/components/ui/Spinner';
@@ -61,6 +62,7 @@ export default function UploadPage() {
   const navigate = useNavigate();
 
   const { isAuthenticated, eventId: storedEventId, verified, role } = useAuthStore();
+  const queryClient = useQueryClient();
   const { data: event } = useEvent(eventId);
 
   const [entries, setEntries] = useState<FileEntry[]>([]);
@@ -202,6 +204,9 @@ export default function UploadPage() {
       await Promise.all(batch.map(uploadEntry));
     }
     setIsUploading(false);
+    // Invalidate gallery + event cache so new photos appear without reload
+    queryClient.invalidateQueries({ queryKey: ['media', eventId] });
+    queryClient.invalidateQueries({ queryKey: ['event', eventId] });
   }
 
   // ---------------------------------------------------------------------------

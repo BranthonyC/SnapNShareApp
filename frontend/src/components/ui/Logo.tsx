@@ -28,7 +28,7 @@ export default function Logo({ size = 'md', showText = true, className = '' }: L
       </span>
       {showText && (
         <span className={`font-heading font-bold text-primary ${textSize[size]}`}>
-          Loving Memory
+          snapNshare
         </span>
       )}
     </div>

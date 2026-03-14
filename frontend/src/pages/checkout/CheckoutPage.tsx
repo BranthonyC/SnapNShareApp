@@ -175,6 +175,7 @@ export default function CheckoutPage() {
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
   const [promoError, setPromoError] = useState('');
+  const [promoDiscount, setPromoDiscount] = useState<{ type: string; value: number } | null>(null);
 
   // ---------------------------------------------------------------------------
   // Validation
@@ -236,12 +237,20 @@ export default function CheckoutPage() {
     setIsValidatingPromo(true);
     setPromoError('');
     try {
-      // Promo is validated server-side during checkout creation.
-      // Here we just mark it as applied so the code is sent with the checkout request.
-      setPromoApplied(true);
+      // validatePromo backend doesn't use eventId, pass placeholder
+      const res = await api.validatePromo('_', code, selectedTier, currency);
+      if (!res.valid) {
+        setPromoError(res.reason || 'Código no válido.');
+        setPromoApplied(false);
+        setPromoDiscount(null);
+      } else {
+        setPromoApplied(true);
+        setPromoDiscount(res.type && res.value != null ? { type: res.type, value: res.value } : null);
+      }
     } catch {
-      setPromoError('Código no válido.');
+      setPromoError('No se pudo validar el código. Intenta de nuevo.');
       setPromoApplied(false);
+      setPromoDiscount(null);
     } finally {
       setIsValidatingPromo(false);
     }
@@ -276,15 +285,21 @@ export default function CheckoutPage() {
       // Store the JWT token so the user is authenticated
       setHostAuth(res.token, res.eventId);
 
-      // All tiers go through Recurrente payment
       try {
         const checkout = await api.createCheckout(res.eventId, {
           tier: selectedTier,
           currency,
           discountCode: promoApplied ? promoCode.trim().toUpperCase() : undefined,
         });
+
+        // If 100% discount — event already activated, go straight to admin
+        if (checkout.activated) {
+          navigate(`/e/${res.eventId}/admin?payment=success`, { replace: true });
+          return;
+        }
+
         // Redirect to Recurrente checkout page
-        window.location.href = checkout.checkoutUrl;
+        window.location.href = checkout.checkoutUrl!;
       } catch (checkoutErr) {
         // If checkout creation fails, send to admin — PaymentGate will block access until paid
         const apiErr = checkoutErr as ApiError;
@@ -304,9 +319,24 @@ export default function CheckoutPage() {
   // Render helpers
   // ---------------------------------------------------------------------------
   const currentTier = TIERS.find((t) => t.id === selectedTier)!;
-  const price = currency === 'USD'
-    ? `$${currentTier.priceUSD}`
-    : `Q${currentTier.priceGTQ}`;
+  const originalPrice = currency === 'USD' ? currentTier.priceUSD : currentTier.priceGTQ;
+  const currencySymbol = currency === 'USD' ? '$' : 'Q';
+
+  // Calculate discounted price
+  let finalPrice = originalPrice;
+  if (promoApplied && promoDiscount) {
+    if (promoDiscount.type === 'percent') {
+      finalPrice = originalPrice - Math.floor(originalPrice * (promoDiscount.value / 100));
+    } else if (promoDiscount.type === 'fixed') {
+      // Fixed discount is in cents, convert to display currency
+      const fixedInDisplay = promoDiscount.value / 100;
+      finalPrice = Math.max(0, originalPrice - fixedInDisplay);
+    }
+    if (finalPrice < 0) finalPrice = 0;
+  }
+
+  const price = `${currencySymbol}${finalPrice}`;
+  const hasDiscount = promoApplied && promoDiscount && finalPrice < originalPrice;
 
   // Promo + summary card (reused in both mobile step 3 and desktop sidebar)
   const promoSection = (
@@ -342,7 +372,11 @@ export default function CheckoutPage() {
       </div>
       {promoApplied && (
         <p className="mt-2 font-body text-xs text-accent">
-          Código aplicado correctamente.
+          {promoDiscount?.type === 'percent' && promoDiscount.value === 100
+            ? '¡Código aplicado — 100% de descuento!'
+            : promoDiscount?.type === 'percent'
+              ? `Código aplicado — ${promoDiscount.value}% de descuento.`
+              : 'Código aplicado correctamente.'}
         </p>
       )}
     </Card>
@@ -359,9 +393,16 @@ export default function CheckoutPage() {
             {currentTier.uploads} fotos &middot; {currentTier.duration}
           </p>
         </div>
-        <p className="font-heading text-2xl font-bold text-primary">
-          {price}
-        </p>
+        <div className="text-right">
+          {hasDiscount && (
+            <p className="font-body text-sm text-tertiary line-through">
+              {currencySymbol}{originalPrice}
+            </p>
+          )}
+          <p className={`font-heading text-2xl font-bold ${hasDiscount ? 'text-accent' : 'text-primary'}`}>
+            {price}
+          </p>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
@@ -610,7 +651,7 @@ export default function CheckoutPage() {
                 <div className="inline-flex rounded-pill border border-border-subtle overflow-hidden">
                   <button
                     type="button"
-                    onClick={() => setCurrency('USD')}
+                    onClick={() => { setCurrency('USD'); setPromoApplied(false); setPromoDiscount(null); }}
                     className={[
                       'px-4 py-1.5 font-body text-sm font-medium transition-colors',
                       currency === 'USD'
@@ -622,7 +663,7 @@ export default function CheckoutPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCurrency('GTQ')}
+                    onClick={() => { setCurrency('GTQ'); setPromoApplied(false); setPromoDiscount(null); }}
                     className={[
                       'px-4 py-1.5 font-body text-sm font-medium transition-colors',
                       currency === 'GTQ'
@@ -647,7 +688,7 @@ export default function CheckoutPage() {
                     <button
                       key={tier.id}
                       type="button"
-                      onClick={() => setSelectedTier(tier.id)}
+                      onClick={() => { setSelectedTier(tier.id); setPromoApplied(false); setPromoDiscount(null); }}
                       className={[
                         'relative flex flex-col text-left rounded-card shadow-card bg-card border-2 overflow-hidden transition-all',
                         'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-1',

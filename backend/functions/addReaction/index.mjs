@@ -2,6 +2,7 @@ import { getItem, putItem, deleteItem, queryItems, updateItem } from '/opt/nodej
 import { ok, validationError, notFound, unauthorized, forbidden, serverError } from '/opt/nodejs/response.mjs';
 import { authenticateRequest } from '/opt/nodejs/auth.mjs';
 import { parseBody, validateReaction } from '/opt/nodejs/validation.mjs';
+import { broadcast } from '/opt/nodejs/broadcast.mjs';
 import { logger } from '/opt/nodejs/logger.mjs';
 
 /**
@@ -136,6 +137,9 @@ export async function handler(event) {
       toggled = true;
       logger.info('Reaction added', { eventId, mediaId, emoji, sessionId: auth.sub });
     }
+
+    // Notify other guests in this event
+    broadcast(eventId, { type: 'reaction_changed', mediaId }).catch(() => {});
 
     return ok({
       toggled,

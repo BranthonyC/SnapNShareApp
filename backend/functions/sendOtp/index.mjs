@@ -111,7 +111,7 @@ export async function handler(event) {
     try {
       await sns.send(new PublishCommand({
         PhoneNumber: destination,
-        Message: `${code} es tu codigo de verificacion para ${ev.title} en Loving Memory. Expira en 5 minutos.`,
+        Message: `${code} es tu codigo de verificacion para ${ev.title} en snapNshare. Expira en 5 minutos.`,
         MessageAttributes: {
           'AWS.SNS.SMS.SMSType': {
             DataType: 'String',

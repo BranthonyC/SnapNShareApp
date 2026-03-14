@@ -6,6 +6,7 @@ import Spinner from '@/components/ui/Spinner';
 import OTPVerifySheet from '@/components/guest/OTPVerifySheet';
 import { useEvent } from '@/hooks/useEvent';
 import { useMedia } from '@/hooks/useMedia';
+import { useEventSocket } from '@/hooks/useEventSocket';
 import { useAuthStore } from '@/stores/authStore';
 import type { MediaItem } from '@/services/api';
 
@@ -284,6 +285,9 @@ export default function GalleryPage() {
   const { data: event, isLoading: eventLoading } = useEvent(eventId);
   const { items: mediaItems, fetchNextPage, hasNextPage, isLoading: mediaLoading, isFetchingNextPage } =
     useMedia(eventId);
+
+  // Real-time updates from other guests in this event
+  useEventSocket(eventId);
 
   // Sort items by engagement and assign tile sizes
   const rankedItems = useMemo(() => {

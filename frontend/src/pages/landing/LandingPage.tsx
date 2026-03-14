@@ -141,7 +141,7 @@ function HeroSection() {
         <div className="flex-1 flex justify-center lg:justify-end">
           <img
             src="/images/hero-mockup.png"
-            alt="Loving Memory — galería de fotos en un celular"
+            alt="snapNshare — galería de fotos en un celular"
             className="w-full max-w-sm rounded-2xl shadow-modal"
             loading="eager"
           />
@@ -290,7 +290,7 @@ function Footer() {
           <span className="inline-flex items-center justify-center w-8 h-8 rounded-card bg-accent-green">
             <Camera className="w-4 h-4 text-white" aria-hidden="true" />
           </span>
-          <span className="font-heading text-lg font-bold text-primary">Loving Memory</span>
+          <span className="font-heading text-lg font-bold text-primary">snapNshare</span>
         </div>
 
         {/* Links */}
@@ -316,7 +316,7 @@ function Footer() {
         </nav>
 
         <p className="font-body text-xs text-tertiary">
-          &copy; {new Date().getFullYear()} Loving Memory. Todos los derechos reservados.
+          &copy; {new Date().getFullYear()} snapNshare. Todos los derechos reservados.
         </p>
       </div>
     </footer>
